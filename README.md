@@ -40,10 +40,10 @@ python3 main.py
 ```
 
 ```
-🔐 quarr> Pentest lengkap target.com              # 🔴 Red
-🔐 quarr> Cek status keamanan server ini           # 🔵 Blue
-🔐 quarr> Investigasi incident, dump memory        # 🔍 DFIR
-🔐 quarr> Cek reputasi IP 185.220.101.34           # 🛡️ Intel
+🔐 quarr> Full pentest on target.com               # 🔴 Red
+🔐 quarr> Check this server's security status      # 🔵 Blue
+🔐 quarr> Investigate incident, dump memory        # 🔍 DFIR
+🔐 quarr> Check IP reputation 185.220.101.34       # 🛡️ Intel
 🔐 quarr> Linux security audit                     # 📋 VulnAss
 🔐 quarr> Security health check                    # ⚙️ SecOps
 ```
