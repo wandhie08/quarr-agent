@@ -164,9 +164,9 @@
 ### 6.2 Web UI (Optional)
 | Status | Priority | Task | File(s) | Notes |
 |--------|----------|------|---------|-------|
-| ⏸️ | 🟢 | Create FastAPI backend | `quarr/api/` | REST API | Optional (deferred for MVP) |
-| ⏸️ | 🟢 | Create simple web dashboard | `quarr/ui/` | React/Vue frontend | Optional (deferred for MVP) |
-| ⏸️ | 🟢 | Add real-time updates | `quarr/api/websocket.py` | WebSocket support | Optional (deferred for MVP) |
+| ✅ | 🟢 | Create FastAPI backend | `quarr/api/` | Implemented (optional) |
+| ✅ | 🟢 | Create simple web dashboard | `quarr/ui/` | Implemented (optional) |
+| ✅ | 🟢 | Add real-time updates | `quarr/api/websocket.py` | Implemented (optional) |
 
 ---
 
@@ -216,8 +216,8 @@ black quarr/
 | Phase 3: Testing | 13 | 13 | 100% |
 | Phase 4: Security | 10 | 10 | 100% |
 | Phase 5: Features | 10 | 10 | 100% |
-| Phase 6: UI/UX (CLI) | 3 | 3 | 100% |
-| **Total (excl. optional Web UI)** | **64** | **64** | **100%** |
+| Phase 6: UI/UX | 6 | 6 | 100% |
+| **Total** | **67** | **67** | **100%** |
 
 ---
 
@@ -230,4 +230,4 @@ black quarr/
 
 ---
 
-*Last Updated: 2026-09-03 (Phase 1-6 implemented; Web UI deferred as optional)*
+*Last Updated: 2026-09-03 (Phase 1-6 complete, incl. optional Web UI)*

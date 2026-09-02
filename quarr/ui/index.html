@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>QUARR Dashboard</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f1720; color: #e6edf3; }
+  header { background: #0b3d64; padding: 1rem 1.5rem; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  main { display: grid; grid-template-columns: 260px 1fr; gap: 1rem; padding: 1rem 1.5rem; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; }
+  h2 { font-size: 0.95rem; margin-top: 0; color: #7ee787; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 4px 0; cursor: pointer; border-bottom: 1px solid #21262d; }
+  li:hover { color: #58a6ff; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid #30363d; padding: 6px 8px; text-align: left; font-size: 0.85rem; }
+  .sev { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .sev-critical { background: #b00020; color: #fff; }
+  .sev-high { background: #e65100; color: #fff; }
+  .sev-medium { background: #f9a825; color: #000; }
+  .sev-low { background: #0277bd; color: #fff; }
+  .sev-info { background: #616161; color: #fff; }
+  #status { font-size: 0.8rem; color: #8b949e; margin-top: 0.5rem; min-height: 1.2rem; }
+  .err { color: #ff7b72; }
+</style>
+</head>
+<body>
+<header><h1>QUARR — Cyber Operations Dashboard</h1></header>
+<main>
+  <section class="card">
+    <h2>Engagements</h2>
+    <ul id="engagements"></ul>
+    <div id="status"></div>
+  </section>
+  <section class="card">
+    <h2 id="findings-title">Findings</h2>
+    <table>
+      <thead><tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th></tr></thead>
+      <tbody id="findings"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const SEV = ["critical", "high", "medium", "low", "info"];
+
+function setStatus(msg, isErr) {
+  const el = document.getElementById("status");
+  el.textContent = msg;                 // textContent = XSS-safe
+  el.className = isErr ? "err" : "";
+}
+
+async function api(path) {
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  return resp.json();
+}
+
+async function loadEngagements() {
+  try {
+    const data = await api("/engagements");
+    const ul = document.getElementById("engagements");
+    ul.textContent = "";
+    (data.engagements || []).forEach(function (e) {
+      const li = document.createElement("li");
+      li.textContent = e.name + " (" + e.findings + ")";  // XSS-safe
+      li.onclick = function () { loadFindings(e.id, e.name); };
+      ul.appendChild(li);
+    });
+    setStatus((data.engagements || []).length + " engagement(s) loaded");
+  } catch (err) {
+    setStatus("API unavailable: " + err.message, true);
+  }
+}
+
+async function loadFindings(id, name) {
+  try {
+    const data = await api("/engagements/" + encodeURIComponent(id) + "/findings");
+    document.getElementById("findings-title").textContent = "Findings — " + name;
+    const tb = document.getElementById("findings");
+    tb.textContent = "";
+    (data.findings || []).forEach(function (f) {
+      const tr = document.createElement("tr");
+      const sev = document.createElement("td");
+      const badge = document.createElement("span");
+      const s = SEV.indexOf(f.severity) >= 0 ? f.severity : "info";
+      badge.className = "sev sev-" + s;
+      badge.textContent = s.toUpperCase();          // XSS-safe
+      sev.appendChild(badge);
+      tr.appendChild(sev);
+      ["title", "asset", "status"].forEach(function (k) {
+        const td = document.createElement("td");
+        td.textContent = f[k] == null ? "" : String(f[k]);  // XSS-safe
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+  } catch (err) {
+    setStatus("Failed to load findings: " + err.message, true);
+  }
+}
+
+function connectWS() {
+  try {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(proto + "://" + location.host + "/ws");
+    ws.onmessage = function (ev) {
+      try {
+        const msg = JSON.parse(ev.data);
+        setStatus("[" + msg.type + "] " + (typeof msg.data === "string" ? msg.data : ""));
+      } catch (e) { /* ignore malformed */ }
+    };
+    ws.onclose = function () { setStatus("Live channel closed", true); };
+  } catch (e) { /* websocket optional */ }
+}
+
+loadEngagements();
+connectWS();
+</script>
+</body>
+</html>

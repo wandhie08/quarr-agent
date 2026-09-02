@@ -23,5 +23,5 @@ weasyprint>=60.0
 
 # Phase 6: UI & UX (fastapi/uvicorn optional — only for the web UI)
 rich>=13.0.0
-# fastapi>=0.110.0
-# uvicorn>=0.29.0
+fastapi>=0.110.0
+uvicorn>=0.29.0

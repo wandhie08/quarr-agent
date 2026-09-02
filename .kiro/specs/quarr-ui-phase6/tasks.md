@@ -37,18 +37,18 @@ Execute top to bottom. Tasks 1-6 (CLI) are the required deliverable; tasks 7-10 
   - _Verify:_ tests green; `--help` lists flags; no-arg start works
   - _Requirements: 1.7, 4.6, 8.1, 8.5_
 
-- [ ] 7. (Optional) FastAPI backend
+- [x] 7. (Optional) FastAPI backend
   - Add `fastapi>=0.110.0`, `uvicorn>=0.29.0` to `requirements.txt` (optional section); create `quarr/api/__init__.py` and `app.py` with routes: list engagements, get state (redacted), get findings, POST query (authorization-gated), POST report; Pydantic models; structured 4xx
   - Reuse persistence/agent/reporter; redact via Phase 4 Secrets_Manager
   - _Verify:_ `tests/test_api.py` using FastAPI `TestClient` — list/state/findings return; state has no secret patterns; query gated by authorization (mock agent); invalid input → 4xx; `/openapi.json` served. Run `venv/bin/pytest tests/test_api.py -v`
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7_
 
-- [ ] 8. (Optional) WebSocket real-time channel
+- [x] 8. (Optional) WebSocket real-time channel
   - Create `quarr/api/websocket.py` with `ConnectionManager` (connect/broadcast/disconnect); wire the agent `status_callback` to broadcast redacted events; handle multiple clients and clean disconnect
   - _Verify:_ `tests/test_websocket.py` using `TestClient` websocket — connect, receive a broadcast event, disconnect cleanly; payload has no secret patterns. Run `venv/bin/pytest tests/test_websocket.py -v`
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 9. (Optional) Web dashboard
+- [x] 9. (Optional) Web dashboard
   - Create `quarr/ui/` static dashboard (HTML/JS) consuming the REST API + WS; engagement list, state, findings table, report preview; severity colors matching CLI; insert API content via safe escaping; clear error state when API unavailable
   - _Verify:_ open `quarr/ui/index.html` against a running API (`uvicorn quarr.api.app:app`) and confirm findings render and XSS payload in a finding title is not executed; document the manual smoke result
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
