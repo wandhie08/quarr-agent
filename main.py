@@ -8,57 +8,57 @@ Menangani engagement setup dan agent loop.
 import asyncio
 import json
 import sys
-import os
-import logging
 from datetime import datetime
-from pathlib import Path
 
-from quarr.core.models import Engagement, PentestState
 from quarr.core.agent import QuarrAgent
+from quarr.core.audit import AuditLogger
+from quarr.core.config import Settings
+from quarr.core.exceptions import ConfigValidationError
+from quarr.core.logging import bind_correlation_id, configure_logging, get_logger
+from quarr.core.models import Engagement
+from quarr.core.persistence import list_engagements, load_state, save_state
+from quarr.core.planner import generate_plan
 from quarr.core.reporter import (
-    generate_executive_summary, generate_technical_report,
-    export_markdown, export_json
+    export_json,
+    export_markdown,
 )
-from quarr.core.persistence import save_state, load_state, list_engagements
-from quarr.core.planner import generate_plan, AttackPlan
-from quarr.core.retest import get_retestable_findings, suggest_retest_tools, retest_summary
+from quarr.core.retest import get_retestable_findings, retest_summary, suggest_retest_tools
+
+# === Configuration & Logging Setup ===
+
+def bootstrap():
+    """
+    Load and validate configuration, configure structured logging, and build
+    the audit logger. Fails fast (exit code 1) on invalid configuration.
+    """
+    try:
+        settings = Settings()
+    except Exception as e:  # pydantic parse error
+        # Logging not configured yet; use a minimal fallback.
+        configure_logging(level="INFO", fmt="console")
+        get_logger("quarr.main").critical("config_parse_failed", error=str(e))
+        sys.exit(1)
+
+    configure_logging(level=settings.log_level, fmt=settings.log_format)
+    log = get_logger("quarr.main")
+
+    try:
+        settings.validate_runtime()
+    except ConfigValidationError as e:
+        log.critical("config_invalid", **e.to_dict())
+        sys.exit(1)
+
+    log.info("config_loaded", **settings.redacted_summary())
+
+    audit_logger = AuditLogger(
+        path=settings.audit_log_path,
+        rotate_max_bytes=settings.audit_max_bytes,
+        rotate_backups=settings.audit_backups,
+    )
+    return settings, log, audit_logger
 
 
-# === Load .env ===
-
-def load_env(env_path: str = ".env"):
-    """Load environment variables from .env file."""
-    p = Path(env_path)
-    if not p.exists():
-        return
-    with open(p) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if '=' in line:
-                key, _, value = line.partition('=')
-                key = key.strip()
-                value = value.strip()
-                if key and key not in os.environ:
-                    os.environ[key] = value
-
-load_env()
-
-
-# === Logging Setup ===
-
-LOG_FILE = "quarr.log"
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stderr),
-    ]
-)
-logger = logging.getLogger("quarr.main")
+settings, logger, audit_logger = bootstrap()
 
 
 # === Engagement Setup ===
@@ -106,7 +106,8 @@ def setup_engagement() -> Engagement:
         excluded.append(target)
 
     # Define allowed operations — all registered tools
-    from tools import get_available_tools
+    from quarr.tools.registry import get_available_tools
+
     allowed_ops = get_available_tools()
 
     engagement = Engagement(
@@ -141,28 +142,43 @@ async def main():
     # Setup
     engagement = setup_engagement()
 
-    # Detect backend
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if openai_key:
-        backend = "openai"
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        print(f"\n🤖 Backend: OpenAI")
+    # Backend from validated settings
+    backend = settings.resolved_backend()
+    if backend == "openai":
+        model = settings.openai_model
+        openai_key = settings.openai_api_key
+        print("\n🤖 Backend: OpenAI")
         print(f"   Model: {model}")
     else:
-        backend = "ollama"
-        model = os.environ.get(
-            "OLLAMA_MODEL",
-            "WhiteRabbitNeo/WhiteRabbitNeo-2.5-Qwen-2.5-Coder-7B:latest"
-        )
-        print(f"\n🤖 Backend: Ollama (local)")
+        model = settings.ollama_model
+        openai_key = ""
+        print("\n🤖 Backend: Ollama (local)")
         print(f"   Model: {model}")
 
-    agent = QuarrAgent(
-        model=model,
-        engagement=engagement,
-        api_key=openai_key if openai_key else None,
-        backend=backend,
-    )
+    try:
+        agent = QuarrAgent(
+            model=model,
+            engagement=engagement,
+            api_key=openai_key if openai_key else None,
+            backend=backend,
+            audit_logger=audit_logger,
+        )
+    except Exception as e:
+        logger.critical("agent_init_failed", error=str(e))
+        print(f"\n❌ Failed to initialize agent: {e}")
+        sys.exit(1)
+
+    # Phase 6: rich renderer + optional interactive mode.
+    from quarr.cli.progress import ProgressReporter
+    from quarr.cli.render import get_renderer
+    renderer = get_renderer()
+    progress = ProgressReporter(renderer)
+
+    _args = globals().get("_args")
+    if _args is not None and getattr(_args, "interactive", False):
+        from quarr.cli.interactive import run_interactive
+        await run_interactive(agent, renderer, status_callback=progress.status)
+        return
 
     print("\n" + "=" * 60)
     print("  QUARR READY — 92 tools loaded")
@@ -276,7 +292,7 @@ async def main():
             if not sessions:
                 print("\n📝 No saved sessions.")
                 continue
-            print(f"\nSaved Sessions:")
+            print("\nSaved Sessions:")
             for i, s in enumerate(sessions, 1):
                 print(f"  {i}. [{s['id']}] {s['name']} ({s['findings']} findings)")
             try:
@@ -304,7 +320,7 @@ async def main():
                 continue
             print("\n🧠 Generating attack plan...")
             try:
-                from tools import get_tools_summary
+                from quarr.tools.registry import get_tools_summary
                 plan = await generate_plan(
                     agent.client, objective,
                     agent.state.summary(),
@@ -327,7 +343,7 @@ async def main():
                             print(f"{'─' * 40}")
                             print(result[:500])
                         plan.status = "completed"
-                        print(f"\n✅ Plan completed.")
+                        print("\n✅ Plan completed.")
                     else:
                         print("Plan not executed.")
                 else:
@@ -366,7 +382,9 @@ async def main():
             continue
 
         elif cmd == "report":
-            from reporter import generate_executive_summary, generate_technical_report
+            from quarr.core.reporter import (
+                generate_executive_summary,
+            )
             print("\n" + generate_executive_summary(agent.state))
             continue
 
@@ -397,7 +415,8 @@ async def main():
 
         # === Agent Execution ===
         print("\n🧠 Agent thinking...")
-        logger.info(f"User query: {user_input}")
+        cid = bind_correlation_id()
+        logger.info("user_query", query=user_input, correlation_id=cid)
 
         try:
             result = await agent.run(
@@ -412,9 +431,32 @@ async def main():
             save_state(agent.state)
 
         except Exception as e:
-            logger.exception(f"Agent error: {e}")
+            logger.error("agent_error", error=str(e), exc_info=True)
             print(f"\n⚠️ Error: {e}")
 
 
+def parse_args(argv=None):
+    """Parse CLI arguments (Phase 6)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="quarr",
+        description="QUARR — Cyber Operations Agent",
+    )
+    parser.add_argument("--interactive", action="store_true",
+                        help="Launch guided interactive mode")
+    parser.add_argument("--engagement", metavar="ID",
+                        help="Load an existing saved engagement by ID")
+    parser.add_argument("--scope", action="append", default=[], metavar="TARGET",
+                        help="Authorized target (repeatable)")
+    parser.add_argument("--backend", choices=["openai", "ollama"],
+                        help="Force LLM backend")
+    parser.add_argument("--report", choices=["executive", "technical"],
+                        help="Report type for exports")
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
+    _args = parse_args()
     asyncio.run(main())
+

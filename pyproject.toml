@@ -1,0 +1,45 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: multi-component tests",
+]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["quarr"]
+omit = [
+    "*/__pycache__/*",
+    "*/venv/*",
+    "tests/*",
+    # Large legacy tool modules not yet migrated to the Phase 2 integration
+    # layer; they get dedicated coverage in later work.
+    "quarr/tools/active_directory.py",
+    "quarr/tools/blue_team.py",
+    "quarr/tools/dfir.py",
+    "quarr/tools/forensic.py",
+    "quarr/tools/mobile.py",
+    "quarr/tools/secops.py",
+    "quarr/tools/threat_hunting.py",
+    "quarr/tools/threat_intel.py",
+    "quarr/tools/vuln_assess.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["venv", "__pycache__", ".kiro"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008", "UP042"]
+
+[tool.black]
+line-length = 100
+target-version = ["py313"]
+extend-exclude = "venv"

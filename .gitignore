@@ -26,6 +26,7 @@ Thumbs.db
 
 # QUARR runtime
 quarr.log
+audit.log
 engagements/
 *.bak
 

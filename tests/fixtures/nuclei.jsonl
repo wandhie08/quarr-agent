@@ -1,0 +1,2 @@
+{"template-id":"tech-detect","info":{"name":"Apache Detection","severity":"info"},"type":"http","matched-at":"https://target.lab.local"}
+{"template-id":"CVE-2021-41773","info":{"name":"Apache Path Traversal","severity":"critical"},"type":"http","matched-at":"https://target.lab.local/cgi-bin/"}

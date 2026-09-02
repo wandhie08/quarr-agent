@@ -13,8 +13,36 @@ LLM TIDAK menentukan command. Tool executor yang menentukan.
 import subprocess
 import shlex
 import re
+import json as _json
 from typing import Dict, Any, Callable, Optional
 from quarr.core.models import RiskLevel
+from quarr.core.exceptions import ToolNotFoundError, QuarrError
+
+
+# === Integration delegation helper (Phase 2) ===
+
+def _summarize(result) -> str:
+    """Convert a ToolResult into the human-readable string handlers must return."""
+    header = f"[{result.tool_name}] {'OK' if result.success else 'FAILED'}"
+    if result.error:
+        header += f" — {result.error}"
+    parsed = _json.dumps(result.parsed, indent=2, default=str)
+    return f"{header}\n{parsed}"
+
+
+def _delegate(integration, **kwargs) -> str:
+    """
+    Run a ToolIntegration, returning a summary string. On a missing binary,
+    return a friendly not-installed message instead of raising (Req 8.3).
+    """
+    try:
+        result = integration.run(**kwargs)
+    except ToolNotFoundError as e:
+        binary = e.context.get("tool", getattr(integration, "binary_name", "tool"))
+        return f"[TOOL NOT INSTALLED] {binary} is not available on this host."
+    except QuarrError as e:
+        return f"[ERROR] {e}"
+    return _summarize(result)
 
 
 # === Tool Metadata ===
@@ -126,23 +154,15 @@ def target_scope_check(target: str) -> str:
 
 def network_discovery(target: str) -> str:
     """Discover hosts dalam scope (nmap ping scan)."""
-    target = _validate_target(target)
-    cmd = f"nmap -sn {shlex.quote(target)}"
-    return _run_command(cmd, timeout=120)
+    from quarr.tools.integrations.nmap import NmapIntegration
+    return _delegate(NmapIntegration(mode="discovery"), target=target)
 
 
 def service_enumeration(target: str, profile: str = "basic") -> str:
     """Enumerasi services pada host."""
-    target = _validate_target(target)
-    if profile == "basic":
-        cmd = f"nmap -sV --top-ports 100 -T4 {shlex.quote(target)}"
-        timeout = 120
-    elif profile == "service_detection":
-        cmd = f"nmap -sV -sC -T4 -p- {shlex.quote(target)}"
-        timeout = 600
-    else:
-        return f"[ERROR] Unknown profile: {profile}. Use 'basic' or 'service_detection'."
-    return _run_command(cmd, timeout=timeout)
+    from quarr.tools.integrations.nmap import NmapIntegration
+    ports = None if profile == "basic" else "1-65535"
+    return _delegate(NmapIntegration(mode="service"), target=target, ports=ports)
 
 
 def subdomain_enum(target: str, mode: str = "passive") -> str:
@@ -217,16 +237,14 @@ def vulnerability_scan(target: str, severity: str = "critical,high") -> str:
 
 def web_vuln_scan(target: str) -> str:
     """Web server vulnerability scan (Nikto)."""
-    url = _validate_url(target)
-    cmd = f"nikto -h {shlex.quote(url)} -Tuning 123bde -timeout 10 -maxtime 180s"
-    return _run_command(cmd, timeout=200)
+    from quarr.tools.integrations.nikto import NiktoIntegration
+    return _delegate(NiktoIntegration(), target=target)
 
 
 def ssl_scan(target: str) -> str:
     """Scan konfigurasi SSL/TLS."""
-    target = _validate_target(target)
-    cmd = f"sslscan --no-colour {shlex.quote(target)}"
-    return _run_command(cmd, timeout=30)
+    from quarr.tools.integrations.sslscan import SSLScanIntegration
+    return _delegate(SSLScanIntegration(), target=target)
 
 
 def waf_detection(target: str) -> str:
@@ -249,11 +267,8 @@ def cms_scan(target: str) -> str:
 
 def sqli_scan(target: str, parameter: str = "") -> str:
     """SQL Injection scanner."""
-    url = _validate_url(target)
-    cmd = f"sqlmap -u {shlex.quote(url)} --batch --level=2 --risk=2 --timeout=10 --retries=1 --smart"
-    if parameter:
-        cmd += f" -p {shlex.quote(parameter)}"
-    return _run_command(cmd, timeout=180)
+    from quarr.tools.integrations.sqlmap import SqlmapIntegration
+    return _delegate(SqlmapIntegration(), target=target, level=1, risk=1)
 
 
 def xss_scan(target: str) -> str:

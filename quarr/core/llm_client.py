@@ -15,12 +15,23 @@ Kedua backend mengembalikan format response yang sama.
 import json
 import os
 import re
+import time
 import httpx
-import logging
 from typing import Optional, Dict, Any, List
 
+from tenacity import (
+    retry, retry_if_exception_type, stop_after_attempt,
+    wait_exponential, before_sleep_log,
+)
 
-logger = logging.getLogger("quarr.llm")
+from quarr.core.exceptions import (
+    LLMConnectionError, LLMTimeoutError, LLMRateLimitError, LLMResponseError,
+)
+from quarr.core.logging import get_logger
+from quarr.core.rate_limiter import TokenBucket
+from quarr.core.circuit_breaker import CircuitBreaker
+
+logger = get_logger("quarr.llm")
 
 # === Defaults ===
 OLLAMA_API = "http://localhost:11434/api/chat"
@@ -28,6 +39,91 @@ OLLAMA_DEFAULT_MODEL = "WhiteRabbitNeo/WhiteRabbitNeo-2.5-Qwen-2.5-Coder-7B:late
 
 OPENAI_API = "https://api.openai.com/v1/chat/completions"
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+# ============================================================
+# Shared HTTP request with error mapping (Req 2)
+# ============================================================
+
+async def _do_request(
+    url: str,
+    payload: dict,
+    timeout: float,
+    headers: Optional[dict] = None,
+    *,
+    backend: str = "",
+    model: str = "",
+    tolerate_400_substring: Optional[str] = None,
+) -> httpx.Response:
+    """
+    Execute an HTTP POST and map transport/HTTP errors to LLMError subclasses.
+
+    Returns the raw httpx.Response on success (2xx), or on a 400 whose body
+    contains ``tolerate_400_substring`` (used by the Ollama native-tools probe).
+    """
+    msg_count = len(payload.get("messages", []))
+    logger.info("llm_request", backend=backend, model=model, message_count=msg_count)
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout, connect=30.0)
+        ) as client:
+            response = await client.post(url, json=payload, headers=headers)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.error("llm_connection_error", backend=backend, model=model, error=str(e))
+        raise LLMConnectionError(
+            "Failed to connect to LLM backend",
+            context={"backend": backend, "model": model}, cause=e,
+        )
+    except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
+        elapsed = round(time.monotonic() - start, 2)
+        logger.error("llm_timeout", backend=backend, model=model, elapsed=elapsed)
+        raise LLMTimeoutError(
+            "LLM request timed out",
+            context={"elapsed": elapsed, "timeout": timeout}, cause=e,
+        )
+
+    status = response.status_code
+
+    if status == 200:
+        logger.debug("llm_response", backend=backend, model=model, status=status)
+        return response
+
+    # Tolerate a specific 400 (e.g., Ollama "does not support tools").
+    if status == 400 and tolerate_400_substring and tolerate_400_substring in response.text:
+        return response
+
+    if status == 429:
+        retry_after = response.headers.get("retry-after")
+        logger.error("llm_rate_limited", backend=backend, model=model,
+                     retry_after=retry_after)
+        raise LLMRateLimitError(
+            "LLM backend rate limited (HTTP 429)",
+            context={"retry_after": retry_after},
+        )
+
+    # 4xx / 5xx
+    body = response.text[:500]
+    logger.error("llm_response_error", backend=backend, model=model,
+                 status=status, body=body)
+    raise LLMResponseError(
+        f"LLM backend returned HTTP {status}",
+        context={"status_code": status, "body": body},
+    )
+
+
+def build_retry(max_attempts: int = 3, initial: float = 1.0,
+                maximum: float = 60.0, multiplier: float = 2.0):
+    """Build a tenacity retry decorator for transient LLM errors (Req 10)."""
+    import logging as _stdlogging
+    return retry(
+        retry=retry_if_exception_type((LLMConnectionError, LLMTimeoutError)),
+        wait=wait_exponential(multiplier=multiplier, min=initial, max=maximum),
+        stop=stop_after_attempt(max_attempts),
+        before_sleep=before_sleep_log(_stdlogging.getLogger("quarr.llm"),
+                                      _stdlogging.WARNING),
+        reraise=True,
+    )
 
 
 # ============================================================
@@ -210,12 +306,17 @@ class OpenAIClient(BaseLLMClient):
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout, connect=30.0)
-        ) as client:
-            response = await client.post(self.base_url, json=payload, headers=headers)
-            response.raise_for_status()
+        response = await _do_request(
+            self.base_url, payload, self.timeout, headers,
+            backend="openai", model=self.model,
+        )
+        try:
             data = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            raise LLMResponseError(
+                "Failed to parse OpenAI response as JSON",
+                context={"parse_error": str(e)}, cause=e,
+            )
 
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
@@ -240,6 +341,8 @@ class OpenAIClient(BaseLLMClient):
                 }
             })
 
+        logger.debug("llm_response_parsed", backend="openai", model=self.model,
+                     tool_call_count=len(tool_calls))
         return {
             "content": content,
             "tool_calls": tool_calls,
@@ -291,28 +394,32 @@ class OllamaClient(BaseLLMClient):
 
     async def _try_native_tools(self, messages, tools, max_tokens) -> Optional[Dict]:
         payload = self._build_payload(messages, max_tokens, tools=tools)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, connect=30.0)) as client:
-            response = await client.post(self.base_url, json=payload)
-            if response.status_code == 400 and "does not support tools" in response.text:
-                return None
-            response.raise_for_status()
-            return self._parse_ollama_response(response.json())
+        response = await _do_request(
+            self.base_url, payload, self.timeout,
+            backend="ollama", model=self.model,
+            tolerate_400_substring="does not support tools",
+        )
+        if response.status_code == 400:
+            return None
+        return self._parse_ollama_response(response.json())
 
     async def _chat_native(self, messages, tools, max_tokens) -> Dict:
         payload = self._build_payload(messages, max_tokens, tools=tools)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, connect=30.0)) as client:
-            response = await client.post(self.base_url, json=payload)
-            response.raise_for_status()
-            return self._parse_ollama_response(response.json())
+        response = await _do_request(
+            self.base_url, payload, self.timeout,
+            backend="ollama", model=self.model,
+        )
+        return self._parse_ollama_response(response.json())
 
     async def _chat_prompt_based(self, messages, tools, max_tokens) -> Dict:
         tool_prompt = self.build_tool_prompt(tools)
         augmented = self.inject_tool_prompt(messages, tool_prompt)
         payload = self._build_payload(augmented, max_tokens)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, connect=30.0)) as client:
-            response = await client.post(self.base_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await _do_request(
+            self.base_url, payload, self.timeout,
+            backend="ollama", model=self.model,
+        )
+        data = response.json()
         content = data.get("message", {}).get("content", "").strip()
         tool_calls = []
         parsed = self.parse_tool_call_from_text(content)
@@ -322,10 +429,11 @@ class OllamaClient(BaseLLMClient):
 
     async def _chat_plain(self, messages, max_tokens) -> Dict:
         payload = self._build_payload(messages, max_tokens)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, connect=30.0)) as client:
-            response = await client.post(self.base_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await _do_request(
+            self.base_url, payload, self.timeout,
+            backend="ollama", model=self.model,
+        )
+        data = response.json()
         content = data.get("message", {}).get("content", "").strip()
         return {"content": content, "tool_calls": [], "raw": data}
 
@@ -361,6 +469,49 @@ class OllamaClient(BaseLLMClient):
 
 
 # ============================================================
+# Resilient wrapper: rate limiter → circuit breaker → retry
+# ============================================================
+
+class ResilientLLMClient(BaseLLMClient):
+    """
+    Wraps a BaseLLMClient, composing rate limiting, circuit breaking, and retry
+    around chat(). Preserves the chat() contract so callers are unchanged.
+    """
+
+    def __init__(self, inner: "BaseLLMClient", settings=None):
+        # Reuse inner's model/temperature/timeout for interface compatibility.
+        super().__init__(inner.model, inner.temperature, inner.timeout)
+        self.inner = inner
+        if settings is None:
+            from quarr.core.config import Settings
+            settings = Settings()
+        self._rate_limiter = TokenBucket(
+            rate_per_minute=settings.rate_limit_tpm,
+            burst=settings.rate_limit_burst,
+        )
+        self._breaker = CircuitBreaker(
+            threshold=settings.circuit_breaker_threshold,
+            window=60.0,
+            reset_timeout=settings.circuit_breaker_timeout,
+        )
+        self._retry = build_retry(
+            max_attempts=max(1, settings.llm_max_retries),
+            initial=settings.backoff_initial,
+            maximum=settings.backoff_max,
+            multiplier=settings.backoff_multiplier,
+        )
+
+    async def chat(self, messages, tools=None, max_tokens: int = 1024):
+        await self._rate_limiter.acquire()
+
+        async def _call():
+            return await self.inner.chat(messages, tools=tools, max_tokens=max_tokens)
+
+        retried = self._retry(_call)
+        return await self._breaker.call(retried)
+
+
+# ============================================================
 # Factory
 # ============================================================
 
@@ -368,6 +519,8 @@ def create_llm_client(
     model: str = None,
     api_key: str = None,
     backend: str = None,
+    settings=None,
+    resilient: bool = False,
 ) -> BaseLLMClient:
     """
     Buat LLM client berdasarkan konfigurasi.
@@ -377,6 +530,9 @@ def create_llm_client(
     - Tidak ada → Ollama
 
     Override dengan parameter backend="openai" atau backend="ollama".
+
+    When resilient=True (or settings provided), the client is wrapped with
+    rate limiting, circuit breaking, and retry (Phase 1 resilience).
     """
     openai_key = api_key or os.environ.get("OPENAI_API_KEY", "")
 
@@ -389,10 +545,13 @@ def create_llm_client(
 
     if backend == "openai":
         model = model or os.environ.get("OPENAI_MODEL", OPENAI_DEFAULT_MODEL)
-        logger.info(f"Using OpenAI backend: {model}")
-        return OpenAIClient(model=model, api_key=openai_key)
-
+        logger.info("using_backend", backend="openai", model=model)
+        client: BaseLLMClient = OpenAIClient(model=model, api_key=openai_key)
     else:
         model = model or os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL)
-        logger.info(f"Using Ollama backend: {model}")
-        return OllamaClient(model=model)
+        logger.info("using_backend", backend="ollama", model=model)
+        client = OllamaClient(model=model)
+
+    if resilient or settings is not None:
+        return ResilientLLMClient(client, settings=settings)
+    return client

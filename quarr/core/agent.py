@@ -8,27 +8,35 @@ M6: Advanced planning (recovery, phase tracking, smart context)
 """
 
 import json
-import logging
-from typing import Optional, Callable, Awaitable
-from datetime import datetime
+import time
+from collections.abc import Awaitable, Callable
 
+from quarr.core.exceptions import PolicyViolationError, ToolError
+from quarr.core.llm_client import create_llm_client
+from quarr.core.logging import get_correlation_id, get_logger
 from quarr.core.models import (
-    PentestState, Engagement, Host, Service,
-    Observation, Finding, ToolExecution,
-    FindingStatus, Severity
+    Engagement,
+    Finding,
+    FindingStatus,
+    Host,
+    Observation,
+    PentestState,
+    Service,
+    Severity,
+    ToolExecution,
 )
-from quarr.core.policy import PolicyEngine, PolicyViolation
-from quarr.tools.registry import (
-    TOOL_REGISTRY, get_tools_for_llm, get_tools_summary,
-    get_available_tools
-)
-from quarr.parsers.network import parse_tool_output, NmapParser
-from quarr.core.llm_client import create_llm_client, BaseLLMClient
-from quarr.knowledge.base import retrieve_knowledge
+from quarr.core.policy import PolicyEngine
 from quarr.core.validator import FindingValidator
+from quarr.knowledge.base import retrieve_knowledge
+from quarr.parsers.network import parse_tool_output
+from quarr.tools.registry import (
+    TOOL_REGISTRY,
+    get_available_tools,
+    get_tools_for_llm,
+    get_tools_summary,
+)
 
-
-logger = logging.getLogger("quarr.agent")
+logger = get_logger("quarr.agent")
 
 # === System Prompt ===
 
@@ -102,6 +110,7 @@ class QuarrAgent:
         engagement: Engagement = None,
         api_key: str = None,
         backend: str = None,
+        audit_logger=None,
     ):
         self.client = create_llm_client(
             model=model,
@@ -112,6 +121,7 @@ class QuarrAgent:
         if engagement:
             self.state.engagement = engagement
         self.policy = PolicyEngine()
+        self.audit_logger = audit_logger
 
     def set_engagement(self, engagement: Engagement) -> None:
         """Set atau update engagement."""
@@ -170,7 +180,7 @@ class QuarrAgent:
             {"role": "system", "content": state_context},
         ]
 
-    def _detect_phase(self) -> Optional[str]:
+    def _detect_phase(self) -> str | None:
         """M6: Detect current pentest phase from tool history."""
         if not self.state.tool_history:
             return "recon"
@@ -487,7 +497,7 @@ class QuarrAgent:
                     confidence=0.9,
                     status=FindingStatus.DETECTED,
                     asset=args.get("package", "app"),
-                    description=f"Sensitive data found in plaintext storage",
+                    description="Sensitive data found in plaintext storage",
                     evidence=sensitive[:5],
                 ))
 
@@ -501,7 +511,7 @@ class QuarrAgent:
     async def run(
         self,
         user_query: str,
-        status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         """
         Jalankan agent loop.
@@ -518,6 +528,7 @@ class QuarrAgent:
 
         tools_for_llm = get_tools_for_llm()
         consecutive_errors = 0
+        consecutive_tool_errors = 0
         max_consecutive_errors = 3
         failed_tools = set()
 
@@ -592,22 +603,87 @@ class QuarrAgent:
 
                 try:
                     self.policy.authorize(tool_name, arguments, self.state.engagement)
-                except PolicyViolation as e:
-                    logger.warning(f"Policy violation: {e}")
+                except PolicyViolationError as e:
+                    logger.warning("policy_violation", tool=tool_name,
+                                   message=str(e), **e.context)
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": f"[POLICY VIOLATION] {str(e)}"})
                     continue
 
+                # --- Execute the tool handler (hardened) ---
+                logger.info("tool_execution_start", tool=tool_name,
+                            arguments=arguments)
+                if self.audit_logger:
+                    audit_seq = self.audit_logger.record_execution(
+                        tool_name=tool_name,
+                        target=arguments.get("target"),
+                        arguments=arguments,
+                        session_id="",
+                        engagement_id=self.state.engagement.id,
+                    )
+                else:
+                    audit_seq = None
+
+                start = time.monotonic()
+                exec_error = None
+                is_error = False
                 try:
                     raw_output = tool_meta.handler(**arguments)
+                except PolicyViolationError as e:
+                    # A handler may re-check policy; treat as recoverable.
+                    logger.warning("policy_violation", tool=tool_name, reason=str(e))
+                    raw_output = f"[POLICY VIOLATION] {e}"
+                    is_error = True
+                    exec_error = str(e)
                 except TypeError as e:
+                    logger.error("tool_parameter_error", tool=tool_name, error=str(e))
                     raw_output = f"[PARAMETER ERROR] {e}"
+                    is_error = True
+                    exec_error = str(e)
+                except ToolError as e:
+                    logger.error("tool_error", tool=tool_name, **e.to_dict())
+                    raw_output = f"[TOOL ERROR] {e}"
+                    is_error = True
+                    exec_error = str(e)
                 except Exception as e:
-                    raw_output = f"[EXECUTION ERROR] {e}"
+                    cid = get_correlation_id()
+                    logger.error("unexpected_tool_error", tool=tool_name,
+                                 correlation_id=cid, error=str(e), exc_info=True)
+                    raw_output = f"[EXECUTION ERROR] {e}" + (f" (ref {cid})" if cid else "")
+                    is_error = True
+                    exec_error = str(e)
 
-                is_error = "[ERROR]" in raw_output or "[TIMEOUT]" in raw_output
+                duration_ms = int((time.monotonic() - start) * 1000)
+
+                # Textual error markers from tools that return strings.
+                if "[ERROR]" in raw_output or "[TIMEOUT]" in raw_output:
+                    is_error = True
+
+                logger.info("tool_execution_complete", tool=tool_name,
+                            success=not is_error, duration_ms=duration_ms)
+                if self.audit_logger and audit_seq is not None:
+                    self.audit_logger.record_result(
+                        seq=audit_seq, success=not is_error,
+                        duration_ms=duration_ms,
+                        result_summary=(raw_output or "")[:200],
+                    )
+
+                # Track consecutive tool errors → terminate loop at 3 (Req 3.4).
                 if is_error:
                     failed_tools.add(tool_key)
+                    consecutive_tool_errors += 1
+                    if consecutive_tool_errors >= max_consecutive_errors:
+                        logger.error("agent_loop_aborted",
+                                     reason="consecutive_tool_errors",
+                                     count=consecutive_tool_errors)
+                        FindingValidator.auto_validate_findings(self.state)
+                        return (
+                            "⚠️ Assessment halted after "
+                            f"{consecutive_tool_errors} consecutive tool failures.\n\n"
+                            f"{self.state.summary()}"
+                        )
+                else:
+                    consecutive_tool_errors = 0
 
                 parsed = parse_tool_output(tool_name, raw_output)
 
@@ -617,6 +693,8 @@ class QuarrAgent:
                     result_summary=parsed.get("raw_summary", "") or parsed.get("summary", ""),
                     raw_output_length=len(raw_output),
                     success=not is_error,
+                    duration_ms=duration_ms,
+                    error=exec_error,
                 )
                 self.state.record_tool(execution)
                 self._update_state_from_result(tool_name, arguments, parsed, raw_output)
@@ -676,4 +754,3 @@ class QuarrAgent:
             return final["content"] or "⚠️ Agent could not produce a conclusion."
         except Exception:
             return f"⚠️ Batas iterasi tercapai.\n\nSTATE AKHIR:\n{self.state.summary()}"
-        self,

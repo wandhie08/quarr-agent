@@ -1,0 +1,29 @@
+{% extends "base.html.j2" %}
+{% block body %}
+<h2>Executive Summary</h2>
+<p>
+  This assessment of <strong>{{ engagement.name }}</strong> identified
+  {{ findings|length }} finding(s) across {{ hosts|length }} host(s).
+  The overall risk rating is
+  <span class="sev-{{ risk_rating|lower }}">{{ risk_rating }}</span>.
+</p>
+
+<h3>Findings by Severity</h3>
+<table>
+  <tr><th>Severity</th><th>Count</th></tr>
+  {% for sev, count in severity_counts.items() %}
+  <tr><td><span class="sev-{{ sev }}">{{ sev|capitalize }}</span></td><td>{{ count }}</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Key Findings</h3>
+{% if findings %}
+<ul>
+  {% for f in findings %}
+  <li><span class="sev-{{ f.severity }}">{{ f.severity|capitalize }}</span> — {{ f.title }} ({{ f.asset }})</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>No findings were identified during this assessment.</p>
+{% endif %}
+{% endblock %}

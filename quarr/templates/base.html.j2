@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>{{ engagement.name }} — {{ report_type|capitalize }} Report</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; color: #1a1a1a; }
+  h1, h2, h3 { color: #0b3d64; }
+  .meta { color: #555; font-size: 0.9rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; font-size: 0.9rem; }
+  th { background: #f0f4f8; }
+  .sev-critical { color: #fff; background: #b00020; padding: 2px 8px; border-radius: 4px; }
+  .sev-high     { color: #fff; background: #e65100; padding: 2px 8px; border-radius: 4px; }
+  .sev-medium   { color: #000; background: #f9a825; padding: 2px 8px; border-radius: 4px; }
+  .sev-low      { color: #fff; background: #0277bd; padding: 2px 8px; border-radius: 4px; }
+  .sev-info     { color: #fff; background: #616161; padding: 2px 8px; border-radius: 4px; }
+  .finding { border-left: 4px solid #0b3d64; padding: 0.5rem 1rem; margin: 1rem 0; background: #fafafa; }
+</style>
+</head>
+<body>
+<h1>{{ engagement.name }}</h1>
+<p class="meta">
+  Engagement ID: {{ engagement.id }} &middot;
+  Generated: {{ generated_at }} &middot;
+  Overall risk: <span class="sev-{{ risk_rating|lower }}">{{ risk_rating }}</span>
+</p>
+{% block body %}{% endblock %}
+</body>
+</html>

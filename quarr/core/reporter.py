@@ -16,13 +16,12 @@ Report mengikuti format standar:
 
 import json
 from datetime import datetime
-from typing import Optional
 
-from quarr.core.models import PentestState, Finding, FindingStatus, Severity
-from quarr.knowledge.base import get_cwe_for_finding, get_cvss_range, CWE_DATABASE, CVSS_REFERENCE
-
+from quarr.core.models import FindingStatus, PentestState
+from quarr.knowledge.base import get_cvss_range, get_cwe_for_finding
 
 # === Severity Stats ===
+
 
 def _count_by_severity(state: PentestState) -> dict:
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
@@ -49,13 +48,16 @@ def _risk_rating(counts: dict) -> str:
 # Executive Summary
 # ============================================================
 
+
 def generate_executive_summary(state: PentestState) -> str:
     """Generate non-technical executive summary."""
     eng = state.engagement
     counts = _count_by_severity(state)
     risk = _risk_rating(counts)
     total_findings = sum(counts.values())
-    confirmed = len([f for f in state.findings if f.status in (FindingStatus.CONFIRMED, FindingStatus.REPORTED)])
+    confirmed = len(
+        [f for f in state.findings if f.status in (FindingStatus.CONFIRMED, FindingStatus.REPORTED)]
+    )
 
     lines = [
         "# EXECUTIVE SUMMARY",
@@ -82,19 +84,23 @@ def generate_executive_summary(state: PentestState) -> str:
     ]
 
     for sev in ["critical", "high", "medium", "low", "info"]:
-        emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}.get(sev, "")
+        emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}.get(
+            sev, ""
+        )
         lines.append(f"| {emoji} {sev.upper()} | {counts[sev]} |")
 
-    lines.extend([
-        "",
-        "## Key Findings",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Key Findings",
+            "",
+        ]
+    )
 
     # Top findings by severity
     sorted_findings = sorted(
         state.findings,
-        key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value)
+        key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value),
     )
 
     for i, f in enumerate(sorted_findings[:5], 1):
@@ -104,13 +110,15 @@ def generate_executive_summary(state: PentestState) -> str:
     if not sorted_findings:
         lines.append("No security findings were identified during this assessment.")
 
-    lines.extend([
-        "",
-        "## Recommendations",
-        "",
-        "The following actions are recommended in order of priority:",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Recommendations",
+            "",
+            "The following actions are recommended in order of priority:",
+            "",
+        ]
+    )
 
     priority = 1
     for f in sorted_findings:
@@ -130,6 +138,7 @@ def generate_executive_summary(state: PentestState) -> str:
 # Technical Report
 # ============================================================
 
+
 def generate_technical_report(state: PentestState) -> str:
     """Generate detailed technical report with all findings."""
     eng = state.engagement
@@ -146,54 +155,60 @@ def generate_technical_report(state: PentestState) -> str:
     ]
     if eng.excluded_targets:
         lines.append(f"**Excluded:** {', '.join(eng.excluded_targets)}")
-    lines.extend([
-        f"**Overall Risk:** {risk}",
-        "",
-        "---",
-        "",
-        "## 1. Scope & Methodology",
-        "",
-        f"The assessment targeted {len(eng.allowed_targets)} scope entry/entries. "
-        f"A total of {len(state.tool_history)} tool executions were performed across "
-        f"reconnaissance, discovery, vulnerability scanning, and exploitation phases.",
-        "",
-        f"**Tools executed:** {len(state.tool_history)}",
-        f"**Hosts discovered:** {len(state.hosts)}",
-        f"**Observations recorded:** {len(state.observations)}",
-        "",
-    ])
+    lines.extend(
+        [
+            f"**Overall Risk:** {risk}",
+            "",
+            "---",
+            "",
+            "## 1. Scope & Methodology",
+            "",
+            f"The assessment targeted {len(eng.allowed_targets)} scope entry/entries. "
+            f"A total of {len(state.tool_history)} tool executions were performed across "
+            f"reconnaissance, discovery, vulnerability scanning, and exploitation phases.",
+            "",
+            f"**Tools executed:** {len(state.tool_history)}",
+            f"**Hosts discovered:** {len(state.hosts)}",
+            f"**Observations recorded:** {len(state.observations)}",
+            "",
+        ]
+    )
 
     # === Hosts & Services ===
-    lines.extend([
-        "## 2. Asset Inventory",
-        "",
-        "| Host | Hostname | OS | Services |",
-        "| ---- | -------- | -- | -------- |",
-    ])
+    lines.extend(
+        [
+            "## 2. Asset Inventory",
+            "",
+            "| Host | Hostname | OS | Services |",
+            "| ---- | -------- | -- | -------- |",
+        ]
+    )
 
     for h in state.hosts:
-        svc_str = ", ".join(
-            f"{s.port}/{s.protocol} {s.name or '?'}"
-            + (f" ({s.version})" if s.version else "")
-            for s in h.services
-        ) or "None enumerated"
-        lines.append(
-            f"| {h.address} | {h.hostname or '-'} | {h.os or '-'} | {svc_str} |"
+        svc_str = (
+            ", ".join(
+                f"{s.port}/{s.protocol} {s.name or '?'}" + (f" ({s.version})" if s.version else "")
+                for s in h.services
+            )
+            or "None enumerated"
         )
+        lines.append(f"| {h.address} | {h.hostname or '-'} | {h.os or '-'} | {svc_str} |")
 
     if not state.hosts:
         lines.append("| - | - | - | No hosts discovered |")
 
     # === Findings ===
-    lines.extend([
-        "",
-        "## 3. Findings",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 3. Findings",
+            "",
+        ]
+    )
 
     sorted_findings = sorted(
         state.findings,
-        key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value)
+        key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value),
     )
 
     if not sorted_findings:
@@ -203,18 +218,20 @@ def generate_technical_report(state: PentestState) -> str:
         cwe = get_cwe_for_finding(f.title)
         cvss_info = get_cvss_range(f.severity.value)
 
-        lines.extend([
-            f"### 3.{i} {f.title}",
-            "",
-            f"| Field | Value |",
-            f"| ----- | ----- |",
-            f"| **ID** | {f.id} |",
-            f"| **Severity** | {f.severity.value.upper()} |",
-            f"| **CVSS Range** | {cvss_info} |",
-            f"| **Status** | {f.status.value.upper()} |",
-            f"| **Confidence** | {f.confidence:.0%} |",
-            f"| **Asset** | {f.asset} |",
-        ])
+        lines.extend(
+            [
+                f"### 3.{i} {f.title}",
+                "",
+                "| Field | Value |",
+                "| ----- | ----- |",
+                f"| **ID** | {f.id} |",
+                f"| **Severity** | {f.severity.value.upper()} |",
+                f"| **CVSS Range** | {cvss_info} |",
+                f"| **Status** | {f.status.value.upper()} |",
+                f"| **Confidence** | {f.confidence:.0%} |",
+                f"| **Asset** | {f.asset} |",
+            ]
+        )
         if cwe:
             lines.append(f"| **CWE** | {cwe['id']}: {cwe['name']} |")
         if f.references:
@@ -223,55 +240,67 @@ def generate_technical_report(state: PentestState) -> str:
         lines.append("")
 
         if f.description:
-            lines.extend([
-                "**Description:**",
-                "",
-                f"{f.description}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "**Description:**",
+                    "",
+                    f"{f.description}",
+                    "",
+                ]
+            )
 
         if f.evidence:
-            lines.extend([
-                "**Evidence:**",
-                "",
-            ])
+            lines.extend(
+                [
+                    "**Evidence:**",
+                    "",
+                ]
+            )
             for j, ev in enumerate(f.evidence, 1):
                 lines.append(f"{j}. {ev}")
             lines.append("")
 
         if f.impact:
-            lines.extend([
-                "**Impact:**",
-                "",
-                f"{f.impact}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "**Impact:**",
+                    "",
+                    f"{f.impact}",
+                    "",
+                ]
+            )
 
         if f.remediation:
-            lines.extend([
-                "**Remediation:**",
-                "",
-                f"{f.remediation}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "**Remediation:**",
+                    "",
+                    f"{f.remediation}",
+                    "",
+                ]
+            )
         elif cwe:
-            lines.extend([
-                "**Remediation:**",
-                "",
-                f"{cwe['remediation']}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "**Remediation:**",
+                    "",
+                    f"{cwe['remediation']}",
+                    "",
+                ]
+            )
 
         lines.append("---")
         lines.append("")
 
     # === Tool Execution Log ===
-    lines.extend([
-        "## 4. Tool Execution Log",
-        "",
-        "| # | Tool | Arguments | Result | Time |",
-        "| - | ---- | --------- | ------ | ---- |",
-    ])
+    lines.extend(
+        [
+            "## 4. Tool Execution Log",
+            "",
+            "| # | Tool | Arguments | Result | Time |",
+            "| - | ---- | --------- | ------ | ---- |",
+        ]
+    )
 
     for i, t in enumerate(state.tool_history, 1):
         args_str = ", ".join(f"{k}={v}" for k, v in t.arguments.items())
@@ -283,11 +312,13 @@ def generate_technical_report(state: PentestState) -> str:
         lines.append("| - | - | - | - | - |")
 
     # === Observations ===
-    lines.extend([
-        "",
-        "## 5. Observations",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 5. Observations",
+            "",
+        ]
+    )
 
     for obs in state.observations:
         lines.append(f"- **[{obs.source_tool}]** {obs.description}")
@@ -301,6 +332,7 @@ def generate_technical_report(state: PentestState) -> str:
 # ============================================================
 # Export Functions
 # ============================================================
+
 
 def export_markdown(state: PentestState, filepath: str, report_type: str = "technical") -> str:
     """Export report sebagai markdown file."""
@@ -318,6 +350,7 @@ def export_markdown(state: PentestState, filepath: str, report_type: str = "tech
 def export_json(state: PentestState, filepath: str) -> str:
     """Export findings sebagai JSON."""
     data = {
+        "schema_version": "1.0",
         "engagement": {
             "name": state.engagement.name,
             "id": state.engagement.id,
@@ -340,7 +373,7 @@ def export_json(state: PentestState, filepath: str) -> str:
                 "services": [
                     {"port": s.port, "protocol": s.protocol, "name": s.name, "version": s.version}
                     for s in h.services
-                ]
+                ],
             }
             for h in state.hosts
         ],
@@ -366,4 +399,94 @@ def export_json(state: PentestState, filepath: str) -> str:
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2, default=str)
 
+    return filepath
+
+
+# ============================================================
+# HTML / PDF export (Phase 5)
+# ============================================================
+
+_TEMPLATE_DIR = None
+
+
+def _template_env():
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    tmpl_dir = Path(__file__).resolve().parent.parent / "templates"
+    return Environment(
+        loader=FileSystemLoader(str(tmpl_dir)),
+        autoescape=select_autoescape(["html", "j2"]),
+    )
+
+
+def _build_context(state: "PentestState", report_type: str) -> dict:
+    counts = _count_by_severity(state)
+    return {
+        "report_type": report_type,
+        "engagement": {
+            "name": state.engagement.name,
+            "id": state.engagement.id,
+        },
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "risk_rating": _risk_rating(counts),
+        "severity_counts": counts,
+        "hosts": [
+            {
+                "address": h.address,
+                "hostname": h.hostname,
+                "services": [
+                    {"port": s.port, "protocol": s.protocol, "name": s.name} for s in h.services
+                ],
+            }
+            for h in state.hosts
+        ],
+        "findings": [
+            {
+                "title": f.title,
+                "severity": f.severity.value,
+                "status": f.status.value,
+                "confidence": f.confidence,
+                "asset": f.asset,
+                "description": f.description,
+                "remediation": f.remediation,
+            }
+            for f in state.findings
+        ],
+    }
+
+
+def render_html(
+    state: "PentestState", report_type: str = "technical", template_path: str = None
+) -> str:
+    """Render an assessment report to an HTML string (autoescaped)."""
+    env = _template_env()
+    template_name = template_path or f"{report_type}.html.j2"
+    template = env.get_template(template_name)
+    return template.render(**_build_context(state, report_type))
+
+
+def export_html(
+    state: "PentestState", filepath: str, report_type: str = "technical", template_path: str = None
+) -> str:
+    html = render_html(state, report_type, template_path)
+    with open(filepath, "w") as f:
+        f.write(html)
+    return filepath
+
+
+def export_pdf(state: "PentestState", filepath: str, report_type: str = "technical") -> str:
+    """Render report to PDF via WeasyPrint (lazily imported)."""
+    try:
+        import weasyprint
+    except ImportError as e:
+        from quarr.core.exceptions import QuarrError
+
+        raise QuarrError(
+            "PDF export requires WeasyPrint. Install with: pip install weasyprint",
+            context={"missing": "weasyprint"},
+        ) from e
+    html = render_html(state, report_type)
+    weasyprint.HTML(string=html).write_pdf(filepath)
     return filepath

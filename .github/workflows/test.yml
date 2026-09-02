@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: |
+          ruff check \
+            quarr/core/exceptions.py quarr/core/logging.py quarr/core/config.py \
+            quarr/core/audit.py quarr/core/rate_limiter.py quarr/core/circuit_breaker.py \
+            quarr/core/agent.py \
+            quarr/tools/executor.py quarr/tools/checker.py \
+            quarr/tools/integrations quarr/tools/parsers
+
+      - name: Format check (black)
+        run: |
+          black --check \
+            quarr/core/exceptions.py quarr/core/logging.py quarr/core/config.py \
+            quarr/core/audit.py quarr/core/rate_limiter.py quarr/core/circuit_breaker.py \
+            quarr/tools/executor.py quarr/tools/checker.py \
+            quarr/tools/integrations quarr/tools/parsers
+
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=quarr --cov-report=term-missing --cov-report=html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-html
+          path: htmlcov/

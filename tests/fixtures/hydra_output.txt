@@ -1,0 +1,4 @@
+Hydra v9.4 starting at 2026-09-02
+[DATA] attacking ssh://10.10.10.20:22/
+[22][ssh] host: 10.10.10.20   login: admin   password: SuperSecret123
+1 of 1 target successfully completed, 1 valid password found

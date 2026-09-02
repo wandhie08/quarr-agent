@@ -5,12 +5,12 @@ Structured evidence collection untuk findings.
 Setiap evidence punya: timestamp, source, type, content, finding_id.
 """
 
-import os
+import hashlib
 import json
+import os
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -21,8 +21,11 @@ class Evidence:
     evidence_type: str  # "tool_output", "screenshot", "request_response", "file", "note"
     description: str
     content: str = ""
-    filepath: Optional[str] = None
+    filepath: str | None = None
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    sha256: str = ""
+    collector: str = "quarr"
+    custody: list = field(default_factory=list)
 
 
 class EvidenceCollector:
@@ -32,7 +35,7 @@ class EvidenceCollector:
         self.engagement_id = engagement_id
         self.evidence_dir = Path(base_dir) / engagement_id / "evidence"
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
-        self.evidence: List[Evidence] = []
+        self.evidence: list[Evidence] = []
         self._counter = 0
 
     def collect(
@@ -67,8 +70,25 @@ class EvidenceCollector:
             f.write(f"---\n{content}\n")
         ev.filepath = str(filepath)
 
+        # Chain of custody: hash the stored file content + record acquisition.
+        with open(filepath, "rb") as fh:
+            ev.sha256 = hashlib.sha256(fh.read()).hexdigest()
+        ev.custody.append({"event": "acquired", "ts": ev.timestamp, "by": ev.collector})
+
         self.evidence.append(ev)
         return ev
+
+    def verify_chain(self) -> list:
+        """Recompute each evidence file hash and flag mismatches (tampering)."""
+        results = []
+        for ev in self.evidence:
+            entry = {"id": ev.id, "expected": ev.sha256, "actual": None, "ok": False}
+            if ev.filepath and os.path.exists(ev.filepath):
+                with open(ev.filepath, "rb") as fh:
+                    entry["actual"] = hashlib.sha256(fh.read()).hexdigest()
+                entry["ok"] = entry["actual"] == ev.sha256
+            results.append(entry)
+        return results
 
     def collect_request_response(
         self,
@@ -87,7 +107,7 @@ class EvidenceCollector:
             evidence_type="request_response",
         )
 
-    def get_for_finding(self, finding_id: str) -> List[Evidence]:
+    def get_for_finding(self, finding_id: str) -> list[Evidence]:
         return [e for e in self.evidence if e.finding_id == finding_id]
 
     def summary(self) -> str:
@@ -103,10 +123,16 @@ class EvidenceCollector:
         filepath = self.evidence_dir / "index.json"
         data = [
             {
-                "id": e.id, "finding_id": e.finding_id,
-                "source_tool": e.source_tool, "type": e.evidence_type,
-                "description": e.description, "filepath": e.filepath,
+                "id": e.id,
+                "finding_id": e.finding_id,
+                "source_tool": e.source_tool,
+                "type": e.evidence_type,
+                "description": e.description,
+                "filepath": e.filepath,
                 "timestamp": e.timestamp,
+                "sha256": e.sha256,
+                "collector": e.collector,
+                "custody": e.custody,
             }
             for e in self.evidence
         ]

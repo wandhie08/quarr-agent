@@ -91,6 +91,8 @@ class ToolExecution(BaseModel):
     result_summary: str
     raw_output_length: int = 0
     success: bool = True
+    duration_ms: Optional[int] = None
+    error: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

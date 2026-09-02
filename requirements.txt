@@ -1,2 +1,27 @@
 pydantic>=2.0
 httpx>=0.27.0
+
+# Phase 1: Foundation & Error Handling
+structlog>=23.0.0
+tenacity>=8.0.0
+python-dotenv>=1.0.0
+pydantic-settings>=2.0
+pytest>=7.0.0
+pytest-asyncio>=0.21
+
+# Phase 3: Testing & Quality
+pytest-cov>=4.0.0
+ruff>=0.4.0
+black>=24.0.0
+
+# Phase 4: Security Hardening (hvac optional — only for Vault secret provider)
+hvac>=2.0.0
+
+# Phase 5: Enhanced Features (weasyprint optional — only for PDF export)
+jinja2>=3.1.0
+weasyprint>=60.0
+
+# Phase 6: UI & UX (fastapi/uvicorn optional — only for the web UI)
+rich>=13.0.0
+# fastapi>=0.110.0
+# uvicorn>=0.29.0
