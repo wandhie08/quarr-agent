@@ -25,3 +25,8 @@ weasyprint>=60.0
 rich>=13.0.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
+
+# Phase 6 professional Web UI — auth
+pyjwt>=2.8.0
+bcrypt>=4.0.0
+python-multipart>=0.0.9

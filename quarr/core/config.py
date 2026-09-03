@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     session_role: Literal["viewer", "operator", "admin"] = "operator"
     auto_approve_dangerous: bool = False
 
+    # --- Web API / Auth (Phase 6 professional Web UI) ---
+    jwt_secret: str = "change-me-in-production-quarr-jwt-secret"
+    jwt_algorithm: str = "HS256"
+    jwt_access_ttl_min: int = 30
+    jwt_refresh_ttl_min: int = 1440
+    web_admin_user: str = "admin"
+    web_admin_password: str = ""  # if empty, a random one is generated at startup
+    cors_origins: str = "*"
+    login_rate_limit: int = 5  # attempts per minute per client
+
     # ------------------------------------------------------------------
     def resolved_backend(self) -> str:
         """Resolve 'auto' to a concrete backend based on available credentials."""

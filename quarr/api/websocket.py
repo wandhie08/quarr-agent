@@ -8,6 +8,8 @@ redacted via the Phase 4 secrets manager. Never transmits raw secrets/evidence.
 import json
 from typing import Any
 
+from fastapi import WebSocket
+
 from quarr.core.logging import get_logger
 from quarr.core.secrets import redact
 
@@ -61,3 +63,18 @@ class ConnectionManager:
 
 # Shared manager instance used by the API app.
 manager = ConnectionManager()
+
+
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    """Basic WS endpoint: send a 'connected' event then keep the channel open."""
+    from starlette.websockets import WebSocketDisconnect
+
+    await manager.connect(websocket)
+    await websocket.send_json({"type": "connected", "data": "ok"})
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)

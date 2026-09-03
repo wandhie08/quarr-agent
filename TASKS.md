@@ -227,6 +227,11 @@ black quarr/
 - Add notes for blockers or decisions
 - Review priorities weekly
 - Can skip Phase 6 for MVP
+- Professional Web UI (beyond MVP): JWT auth + RBAC (viewer/operator/admin),
+  React+TS+Vite+Tailwind SPA (Login, Dashboard, Engagements, Engagement Detail
+  with tabs, Live Console with WebSocket streaming + dangerous-tool approval,
+  Report viewer/downloader). Backend: `quarr/api/{app,auth,security,websocket,live}.py`;
+  SPA: `quarr/ui/` (built to `quarr/ui/dist`, served by FastAPI).
 
 ---
 
