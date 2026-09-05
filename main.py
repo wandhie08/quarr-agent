@@ -477,7 +477,13 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-if __name__ == "__main__":
+def run():
+    """Synchronous entry point for the `quarr` console script."""
+    global _args
     _args = parse_args()
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()
 
