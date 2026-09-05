@@ -6,11 +6,40 @@ Setiap evidence punya: timestamp, source, type, content, finding_id.
 """
 
 import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+
+def _custody_key() -> bytes | None:
+    """Return the HMAC key used to sign the evidence index, or None.
+
+    The key MUST live outside the evidence bundle so an attacker who tampers
+    with evidence files cannot forge the signature. Sources, in order:
+      1. QUARR_CUSTODY_KEY env var
+      2. ~/.quarr/custody.key (created 0600 on first use)
+    """
+    env = os.environ.get("QUARR_CUSTODY_KEY")
+    if env:
+        return env.encode()
+    key_path = Path(os.environ.get("QUARR_CUSTODY_KEY_FILE",
+                                   os.path.expanduser("~/.quarr/custody.key")))
+    try:
+        if key_path.exists():
+            data = key_path.read_bytes().strip()
+            return data or None
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        new_key = os.urandom(32).hex().encode()
+        # Write atomically with restrictive permissions.
+        fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(new_key)
+        return new_key
+    except OSError:
+        return None
 
 
 @dataclass
@@ -119,7 +148,12 @@ class EvidenceCollector:
         return "\n".join(lines)
 
     def save_index(self) -> str:
-        """Save evidence index as JSON."""
+        """Save evidence index as JSON, plus an HMAC signature over its content.
+
+        The signature (index.json.sig) is computed with a key held OUTSIDE the
+        bundle (QUARR_CUSTODY_KEY / ~/.quarr/custody.key), so tampering with the
+        index or any evidence hash is detectable via verify_index_signature().
+        """
         filepath = self.evidence_dir / "index.json"
         data = [
             {
@@ -136,6 +170,38 @@ class EvidenceCollector:
             }
             for e in self.evidence
         ]
+        raw = json.dumps(data, indent=2)
         with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+            f.write(raw)
+
+        # Tamper-evident signature over the exact bytes of the index.
+        key = _custody_key()
+        if key is not None:
+            sig = hmac.new(key, raw.encode(), hashlib.sha256).hexdigest()
+            with open(str(filepath) + ".sig", "w") as f:
+                f.write(sig)
         return str(filepath)
+
+    def verify_index_signature(self) -> dict:
+        """Verify the index HMAC signature to detect tampering.
+
+        Returns {'signed': bool, 'valid': bool, 'reason': str}. `valid` is True
+        only if the signature matches the current index content under the
+        out-of-bundle key — i.e. neither the index nor recorded hashes were
+        altered.
+        """
+        filepath = self.evidence_dir / "index.json"
+        sig_path = Path(str(filepath) + ".sig")
+        if not filepath.exists():
+            return {"signed": False, "valid": False, "reason": "no index"}
+        if not sig_path.exists():
+            return {"signed": False, "valid": False, "reason": "no signature file"}
+        key = _custody_key()
+        if key is None:
+            return {"signed": True, "valid": False, "reason": "no custody key available"}
+        raw = filepath.read_text()
+        expected = hmac.new(key, raw.encode(), hashlib.sha256).hexdigest()
+        actual = sig_path.read_text().strip()
+        if hmac.compare_digest(expected, actual):
+            return {"signed": True, "valid": True, "reason": "signature valid"}
+        return {"signed": True, "valid": False, "reason": "SIGNATURE MISMATCH — index tampered"}

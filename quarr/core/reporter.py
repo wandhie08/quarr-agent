@@ -338,6 +338,8 @@ def export_markdown(state: PentestState, filepath: str, report_type: str = "tech
     """Export report sebagai markdown file."""
     if report_type == "executive":
         content = generate_executive_summary(state)
+    elif report_type == "bugbounty":
+        content = generate_bug_bounty_report(state)
     else:
         content = generate_technical_report(state)
 
@@ -345,6 +347,113 @@ def export_markdown(state: PentestState, filepath: str, report_type: str = "tech
         f.write(content)
 
     return filepath
+
+
+def _infer_vuln_type(title: str) -> str:
+    """Map a finding title to a coarse vuln-type label for CVSS defaults."""
+    t = (title or "").lower()
+    mapping = [
+        ("sql injection", "sql-injection"), ("sqli", "sql-injection"),
+        ("command injection", "command-injection"), ("rce", "rce"),
+        ("remote code", "rce"),
+        ("bola", "bola"), ("object level", "bola"), ("idor", "idor"),
+        ("cross-site scripting", "xss"), ("xss", "xss"),
+        ("ssrf", "ssrf"), ("xxe", "xxe"),
+        ("excessive data", "excessive-data-exposure"),
+        ("hardcoded secret", "hardcoded-secret"), ("secret", "hardcoded-secret"),
+        ("jwt", "jwt-weakness"),
+        ("weak credential", "weak-credentials"), ("default login", "weak-credentials"),
+        ("path traversal", "path-traversal"),
+        ("debuggable", "insecure-config"), ("cleartext", "insecure-config"),
+        ("directory listing", "info-disclosure"),
+    ]
+    for needle, label in mapping:
+        if needle in t:
+            return label
+    return ""
+
+
+def generate_bug_bounty_report(state: PentestState) -> str:
+    """Generate a bug-bounty-style report (HackerOne/Bugcrowd friendly).
+
+    Each finding gets a CVSS v3.1 score + vector, structured sections
+    (Description, Steps to Reproduce, Impact, Remediation, References), and
+    attached evidence. Suitable for submitting or as a professional deliverable.
+    """
+    from quarr.core.cvss import score_finding
+
+    eng = state.engagement
+    lines = [
+        f"# Security Assessment Report — {eng.name}",
+        "",
+        f"- **Date:** {datetime.now().strftime('%Y-%m-%d')}",
+        f"- **Scope:** {', '.join(eng.allowed_targets) or 'n/a'}",
+        f"- **Findings:** {len(state.findings)}",
+        "",
+        "---",
+        "",
+    ]
+
+    # Sort findings by CVSS score (desc) so the most severe lead.
+    sev_order = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+    scored = []
+    for f in state.findings:
+        vt = _infer_vuln_type(f.title)
+        cvss = score_finding(vt)
+        score = cvss.get("score", -1.0)
+        scored.append((score, sev_order.get(f.severity.value, 0), f, cvss))
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    for i, (_, _, f, cvss) in enumerate(scored, 1):
+        sev = f.severity.value.upper()
+        lines.append(f"## {i}. {f.title}")
+        if cvss:
+            lines.append(f"**Severity:** {sev} · **CVSS v3.1:** {cvss['score']} "
+                         f"(`{cvss['vector']}`)")
+        else:
+            lines.append(f"**Severity:** {sev}")
+        lines.append(f"**Affected asset:** {f.asset}")
+        lines.append(f"**Status:** {f.status.value}")
+        lines.append("")
+        lines.append("### Description")
+        lines.append(f.description or f.title)
+        lines.append("")
+        lines.append("### Steps to Reproduce")
+        if f.evidence:
+            lines.append("```")
+            for ev in f.evidence[:8]:
+                lines.append(str(ev)[:400])
+            lines.append("```")
+        else:
+            lines.append("_See evidence / tool output below._")
+        lines.append("")
+        lines.append("### Impact")
+        lines.append(f.impact or _impact_for(f.severity.value))
+        lines.append("")
+        lines.append("### Remediation")
+        lines.append(f.remediation or "Apply standard remediation for this vulnerability class.")
+        if f.references:
+            lines.append("")
+            lines.append("### References")
+            for ref in f.references[:8]:
+                lines.append(f"- {ref}")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    if not scored:
+        lines.append("_No findings recorded._")
+    return "\n".join(lines)
+
+
+def _impact_for(severity: str) -> str:
+    return {
+        "critical": "Full compromise of confidentiality, integrity, and/or availability.",
+        "high": "Significant unauthorized access or data exposure.",
+        "medium": "Partial impact under certain conditions.",
+        "low": "Limited impact; defense-in-depth concern.",
+        "info": "Informational; no direct security impact.",
+    }.get(severity, "See description.")
 
 
 def export_json(state: PentestState, filepath: str) -> str:

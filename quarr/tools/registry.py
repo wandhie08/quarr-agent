@@ -291,10 +291,10 @@ def vulnerability_scan(target: str, severity: str = "critical,high",
     return _run_command(cmd, timeout=300)
 
 
-def web_vuln_scan(target: str) -> str:
-    """Web server vulnerability scan (Nikto)."""
+def web_vuln_scan(target: str, cookie: str = "", headers: str = "") -> str:
+    """Web server vulnerability scan (Nikto). cookie/headers enable authenticated scans."""
     from quarr.tools.integrations.nikto import NiktoIntegration
-    return _delegate(NiktoIntegration(), target=target)
+    return _delegate(NiktoIntegration(), target=target, cookie=cookie, headers=headers)
 
 
 def ssl_scan(target: str) -> str:
@@ -321,10 +321,11 @@ def cms_scan(target: str) -> str:
 # PHASE 4: EXPLOITATION
 # ============================================================
 
-def sqli_scan(target: str, parameter: str = "") -> str:
-    """SQL Injection scanner."""
+def sqli_scan(target: str, parameter: str = "", cookie: str = "", headers: str = "") -> str:
+    """SQL Injection scanner. cookie/headers enable authenticated testing."""
     from quarr.tools.integrations.sqlmap import SqlmapIntegration
-    return _delegate(SqlmapIntegration(), target=target, level=1, risk=1)
+    return _delegate(SqlmapIntegration(), target=target, level=1, risk=1,
+                     cookie=cookie, headers=headers)
 
 
 def xss_scan(target: str) -> str:
@@ -554,7 +555,9 @@ _register(
     "vuln_scan", RiskLevel.MEDIUM, True,
     web_vuln_scan,
     {"type": "object", "properties": {
-        "target": {"type": "string", "description": "Target URL."}
+        "target": {"type": "string", "description": "Target URL."},
+        "cookie": {"type": "string", "description": "Optional session cookie for authenticated scan (e.g. 'session=abc')."},
+        "headers": {"type": "string", "description": "Optional auth header 'Name: value' (e.g. 'Authorization: Bearer <token>')."}
     }, "required": ["target"]},
     timeout=200,
 )
@@ -590,7 +593,9 @@ _register(
     sqli_scan,
     {"type": "object", "properties": {
         "target": {"type": "string", "description": "Target URL with query parameters (e.g., https://site.com/page?id=1)."},
-        "parameter": {"type": "string", "description": "Specific parameter to test (optional, tests all if empty)."}
+        "parameter": {"type": "string", "description": "Specific parameter to test (optional, tests all if empty)."},
+        "cookie": {"type": "string", "description": "Optional session cookie for authenticated SQLi testing (e.g. 'session=abc')."},
+        "headers": {"type": "string", "description": "Optional auth header 'Name: value' (e.g. 'Authorization: Bearer <token>')."}
     }, "required": ["target"]},
     timeout=180,
 )
@@ -1401,6 +1406,7 @@ from quarr.tools.api_security import (  # noqa: E402 (intentional sectioned impo
     api_endpoint_discovery,
     http_request,
     jwt_analyze,
+    web_login,
 )
 
 _register(
@@ -1453,6 +1459,20 @@ _register(
         "cookie": {"type": "string", "description": "Optional Cookie header value (e.g. 'session=abc')."},
         "follow_redirects": {"type": "boolean", "description": "Follow 3xx redirects (default false)."}
     }, "required": ["method", "url"]}, timeout=30)
+
+_register(
+    "web_login",
+    "Authenticate to a web/API login endpoint (JSON or form) and extract the session token/cookie for use in authenticated scans (sqli_scan/vulnerability_scan/web_vuln_scan/http_request).",
+    "recon", RiskLevel.LOW, True, web_login,
+    {"type": "object", "properties": {
+        "url": {"type": "string", "description": "Login endpoint URL."},
+        "username": {"type": "string", "description": "Username/email."},
+        "password": {"type": "string", "description": "Password."},
+        "mode": {"type": "string", "enum": ["json", "form"], "description": "Request body encoding (default json)."},
+        "user_field": {"type": "string", "description": "Username field name in the body (default 'username')."},
+        "pass_field": {"type": "string", "description": "Password field name in the body (default 'password')."},
+        "token_field": {"type": "string", "description": "JSON key holding the token (auto-detected if empty)."}
+    }, "required": ["url", "username", "password"]}, timeout=30)
 
 
 def get_tool(name: str) -> ToolMeta | None:

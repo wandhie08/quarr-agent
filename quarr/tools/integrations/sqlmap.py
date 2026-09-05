@@ -19,12 +19,21 @@ class SqlmapIntegration(ToolIntegration):
     default_timeout = 900
     requires_scope = True
 
-    def build_command(self, *, target: str, level: int = 1, risk: int = 1, **kwargs) -> list[str]:
+    def build_command(
+        self,
+        *,
+        target: str,
+        level: int = 1,
+        risk: int = 1,
+        cookie: str = "",
+        headers: str = "",
+        **kwargs,
+    ) -> list[str]:
         url = validate_url(target)
         # Clamp to safe bounds.
         level = max(1, min(int(level), 5))
         risk = max(1, min(int(risk), 3))
-        return [
+        argv = [
             "sqlmap",
             "-u",
             url,
@@ -34,6 +43,12 @@ class SqlmapIntegration(ToolIntegration):
             "--risk",
             str(risk),
         ]
+        # Authenticated SQLi testing: pass session cookie / auth headers.
+        if cookie:
+            argv += ["--cookie", cookie]
+        if headers:
+            argv += ["--headers", headers]
+        return argv
 
     def parse_output(self, raw: str) -> dict[str, Any]:
         text = raw or ""

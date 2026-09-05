@@ -16,9 +16,17 @@ class NiktoIntegration(ToolIntegration):
     default_timeout = 600
     requires_scope = True
 
-    def build_command(self, *, target: str, **kwargs) -> list[str]:
+    def build_command(
+        self, *, target: str, cookie: str = "", headers: str = "", **kwargs
+    ) -> list[str]:
         host = validate_target(target)
-        return ["nikto", "-host", host, "-Format", "json", "-output", "-", "-nointeractive"]
+        argv = ["nikto", "-host", host, "-Format", "json", "-output", "-", "-nointeractive"]
+        # Authenticated scanning: nikto passes extra headers via -H (repeatable).
+        if cookie:
+            argv += ["-H", f"Cookie: {cookie}"]
+        if headers:
+            argv += ["-H", headers]
+        return argv
 
     def parse_output(self, raw: str) -> dict[str, Any]:
         return parse_nikto(raw)
