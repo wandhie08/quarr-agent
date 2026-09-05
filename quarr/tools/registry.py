@@ -123,6 +123,37 @@ def _validate_domain(domain: str) -> str:
     return domain
 
 
+# Shell metacharacters that must never appear in an auth header/cookie value,
+# since these strings are interpolated into commands run by _run_command.
+_HEADER_DANGEROUS = set(";|&$`\n\r")
+
+
+def _validate_header(header: str) -> str:
+    """Validate a single 'Name: value' HTTP header line for safe CLI passthrough.
+
+    Rejects shell metacharacters. Returns the trimmed header. Used for
+    authenticated scanning (e.g. 'Authorization: Bearer <token>').
+    """
+    header = (header or "").strip()
+    if not header:
+        raise ValueError("Empty header")
+    if any(c in _HEADER_DANGEROUS for c in header):
+        raise ValueError(f"Header contains shell metacharacters: {header[:40]}")
+    if ":" not in header:
+        raise ValueError("Header must be in 'Name: value' form")
+    return header
+
+
+def _validate_cookie(cookie: str) -> str:
+    """Validate a Cookie header value (e.g. 'session=abc; role=user')."""
+    cookie = (cookie or "").strip()
+    if not cookie:
+        raise ValueError("Empty cookie")
+    if any(c in _HEADER_DANGEROUS for c in cookie):
+        raise ValueError(f"Cookie contains shell metacharacters: {cookie[:40]}")
+    return cookie
+
+
 # ============================================================
 # PHASE 1: RECONNAISSANCE
 # ============================================================
@@ -172,11 +203,14 @@ def web_fingerprint(target: str) -> str:
 # PHASE 2: DISCOVERY & ENUMERATION
 # ============================================================
 
-def web_content_discovery(target: str, wordlist: str = "common", mode: str = "dir") -> str:
+def web_content_discovery(target: str, wordlist: str = "common", mode: str = "dir",
+                          headers: str = "", cookie: str = "") -> str:
     """
     Directory/file brute-force.
     wordlist: "common", "medium", "large", "api"
     mode: "dir" (directories) atau "dns" (subdomain via dns)
+    headers: optional 'Name: value' auth header for authenticated content discovery.
+    cookie: optional Cookie value (e.g. 'session=abc') for authenticated discovery.
     """
     url = _validate_url(target)
 
@@ -202,6 +236,14 @@ def web_content_discovery(target: str, wordlist: str = "common", mode: str = "di
         cmd = f"gobuster dns -d {shlex.quote(domain)} -w {shlex.quote(wl_path)} -t 30 -q --no-error"
     else:
         cmd = f"gobuster dir -u {shlex.quote(url)} -w {shlex.quote(wl_path)} -t 30 -q --no-error"
+        # Auth passthrough only applies to HTTP (dir) mode.
+        try:
+            if headers:
+                cmd += f" -H {shlex.quote(_validate_header(headers))}"
+            if cookie:
+                cmd += f" -c {shlex.quote(_validate_cookie(cookie))}"
+        except ValueError as e:
+            return f"[ERROR] {e}"
     return _run_command(cmd, timeout=180)
 
 
@@ -223,8 +265,13 @@ def parameter_discovery(target: str) -> str:
 # PHASE 3: VULNERABILITY SCANNING
 # ============================================================
 
-def vulnerability_scan(target: str, severity: str = "critical,high") -> str:
-    """Automated vulnerability scanning (Nuclei)."""
+def vulnerability_scan(target: str, severity: str = "critical,high",
+                       headers: str = "", cookie: str = "") -> str:
+    """Automated vulnerability scanning (Nuclei).
+
+    headers: optional 'Name: value' auth header (e.g. 'Authorization: Bearer X').
+    cookie: optional Cookie value for authenticated scans (e.g. 'session=abc').
+    """
     url = _validate_url(target)
     # Validate severity strictly: only known levels, comma-separated. Prevents
     # injecting extra nuclei flags (e.g. "-t http://evil/x.yaml") via this arg.
@@ -234,6 +281,13 @@ def vulnerability_scan(target: str, severity: str = "critical,high") -> str:
         return "[ERROR] Invalid severity. Use any of: critical,high,medium,low,info"
     severity = ",".join(levels)
     cmd = f"nuclei -u {shlex.quote(url)} -severity {shlex.quote(severity)} -silent -jsonl"
+    try:
+        if headers:
+            cmd += f" -H {shlex.quote(_validate_header(headers))}"
+        if cookie:
+            cmd += f" -H {shlex.quote('Cookie: ' + _validate_cookie(cookie))}"
+    except ValueError as e:
+        return f"[ERROR] {e}"
     return _run_command(cmd, timeout=300)
 
 
@@ -448,7 +502,9 @@ _register(
         "wordlist": {"type": "string", "enum": ["common", "medium", "large", "api"],
                       "description": "Wordlist size. 'common' = fast, 'api' = API endpoints."},
         "mode": {"type": "string", "enum": ["dir", "dns"],
-                  "description": "'dir' = directory brute-force. 'dns' = subdomain brute-force."}
+                  "description": "'dir' = directory brute-force. 'dns' = subdomain brute-force."},
+        "headers": {"type": "string", "description": "Optional auth header 'Name: value' for authenticated discovery (dir mode)."},
+        "cookie": {"type": "string", "description": "Optional Cookie value (e.g. 'session=abc') for authenticated discovery."}
     }, "required": ["target"]},
     timeout=180,
 )
@@ -485,7 +541,9 @@ _register(
     {"type": "object", "properties": {
         "target": {"type": "string", "description": "Target URL."},
         "severity": {"type": "string",
-                      "description": "Comma-separated severity filter: critical,high,medium,low,info."}
+                      "description": "Comma-separated severity filter: critical,high,medium,low,info."},
+        "headers": {"type": "string", "description": "Optional auth header 'Name: value' for authenticated scans (e.g. 'Authorization: Bearer <token>')."},
+        "cookie": {"type": "string", "description": "Optional Cookie value (e.g. 'session=abc') for authenticated scans."}
     }, "required": ["target"]},
     timeout=300,
 )
@@ -1341,6 +1399,7 @@ from quarr.tools.api_security import (  # noqa: E402 (intentional sectioned impo
     api_bola_check,
     api_data_exposure_check,
     api_endpoint_discovery,
+    http_request,
     jwt_analyze,
 )
 
@@ -1380,6 +1439,20 @@ _register(
     {"type": "object", "properties": {
         "token": {"type": "string", "description": "The JWT string (header.payload.signature)."}
     }, "required": ["token"]}, timeout=15)
+
+_register(
+    "http_request",
+    "Send a single arbitrary HTTP request (GET/POST/PUT/DELETE/PATCH) with custom headers, cookie, and body. Core tool for MANUAL verification & business-logic/IDOR/BOLA testing. Returns status + headers + redacted body.",
+    "exploit", RiskLevel.MEDIUM, True, http_request,
+    {"type": "object", "properties": {
+        "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+                    "description": "HTTP method."},
+        "url": {"type": "string", "description": "Full request URL."},
+        "headers": {"type": "string", "description": "Optional 'Name: value' header lines separated by ';;'."},
+        "body": {"type": "string", "description": "Optional request body (JSON or form data)."},
+        "cookie": {"type": "string", "description": "Optional Cookie header value (e.g. 'session=abc')."},
+        "follow_redirects": {"type": "boolean", "description": "Follow 3xx redirects (default false)."}
+    }, "required": ["method", "url"]}, timeout=30)
 
 
 def get_tool(name: str) -> ToolMeta | None:

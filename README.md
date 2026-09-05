@@ -2,7 +2,7 @@
 
 ### One Agent. Red. Blue. Forensics.
 
-**Autonomous Cyber Operations Agent** — 96 tools across 6 security domains, powered by AI (OpenAI / Ollama).
+**Autonomous Cyber Operations Agent** — 97 tools across 6 security domains, powered by AI (OpenAI / Ollama).
 
 ```
                     QUARR
@@ -10,7 +10,7 @@
           ┌───────────┼───────────┐
           │           │           │
       QUARR Red   QUARR Blue   QUARR DFIR
-      47 tools     19 tools     16 tools
+      48 tools     19 tools     16 tools
           │           │           │
       Offensive   Defensive    Forensics
           │           │           │
@@ -48,11 +48,11 @@ python3 main.py
 🔐 quarr> Security health check                    # ⚙️ SecOps
 ```
 
-## 96 Tools
+## 97 Tools
 
 | Domain | Count | Capabilities |
 |--------|-------|-------------|
-| 🔴 Quarr Red | 47 | Web, API, Network, Mobile, AD pentest |
+| 🔴 Quarr Red | 48 | Web, API, Network, Mobile, AD pentest |
 | 🔵 Quarr Blue | 19 | Defense, monitoring, threat hunting |
 | 🔍 Quarr DFIR | 16 | Forensic, incident response, evidence |
 | 🛡️ Quarr Intel | 5 | VirusTotal, AbuseIPDB, Shodan, CVE/NVD |
@@ -88,7 +88,7 @@ python3 main.py
 | Document | Content |
 |----------|---------|
 | [INSTALLATION.md](docs/en/INSTALLATION.md) | Installation & setup guide |
-| [USAGE.md](docs/en/USAGE.md) | Full guide — all 96 tools, setup, config |
+| [USAGE.md](docs/en/USAGE.md) | Full guide — all 97 tools, setup, config |
 | [PENTEST_GUIDE.md](docs/en/PENTEST_GUIDE.md) | Red/Blue/Forensic step-by-step |
 | [MOBILE.md](docs/en/MOBILE.md) | Mobile pentest (APK + device) |
 | [ACTIVE_DIRECTORY.md](docs/en/ACTIVE_DIRECTORY.md) | Active Directory pentest guide |
@@ -108,7 +108,7 @@ python3 main.py
 | Dokumen | Isi |
 |---------|-----|
 | [INSTALLATION.md](docs/id/INSTALLATION.md) | Panduan instalasi & setup |
-| [USAGE.md](docs/id/USAGE.md) | Panduan lengkap — 96 tools, setup, konfigurasi |
+| [USAGE.md](docs/id/USAGE.md) | Panduan lengkap — 97 tools, setup, konfigurasi |
 | [PENTEST_GUIDE.md](docs/id/PENTEST_GUIDE.md) | Panduan step-by-step Red/Blue/Forensic |
 | [MOBILE.md](docs/id/MOBILE.md) | Mobile pentest (APK + device) |
 | [ACTIVE_DIRECTORY.md](docs/id/ACTIVE_DIRECTORY.md) | Panduan pentest Active Directory |

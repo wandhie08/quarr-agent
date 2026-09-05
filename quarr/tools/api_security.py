@@ -152,6 +152,75 @@ def api_bola_check(
     return "\n".join(lines)
 
 
+def http_request(
+    method: str,
+    url: str,
+    headers: str = "",
+    body: str = "",
+    cookie: str = "",
+    follow_redirects: bool = False,
+) -> str:
+    """Send a single arbitrary HTTP request and return a summary of the response.
+
+    The core primitive for MANUAL verification and business-logic testing
+    (bug bounty): reproduce a request, tamper a parameter, replay with another
+    user's token, test IDOR/BOLA/access-control, etc.
+
+    method: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.
+    headers: optional 'Name: value' lines separated by ';;'
+             (e.g. 'Authorization: Bearer X;;X-Api: 9').
+    body: optional request body (JSON or form string).
+    cookie: optional Cookie header value (e.g. 'session=abc').
+    Returns status, response headers, and a truncated body — never raises.
+    """
+    method = (method or "GET").strip().upper()
+    if method not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"):
+        return f"[ERROR] Unsupported method: {method}"
+    try:
+        url = _validate_url(url)
+    except ValueError as e:
+        return f"[ERROR] {e}"
+
+    hdrs = {}
+    for pair in filter(None, (h.strip() for h in headers.split(";;"))):
+        if ":" in pair:
+            k, v = pair.split(":", 1)
+            hdrs[k.strip()] = v.strip()
+    if cookie:
+        hdrs["Cookie"] = cookie.strip()
+
+    content = body.encode() if body else None
+    try:
+        resp = httpx.request(
+            method, url, headers=hdrs, content=content,
+            timeout=20.0, follow_redirects=follow_redirects,
+        )
+    except httpx.HTTPError as e:
+        return f"[ERROR] Request failed: {e}"
+
+    lines = [
+        f"=== HTTP {method} {url} ===",
+        f"Status: {resp.status_code} {resp.reason_phrase}",
+        f"Length: {len(resp.content)} bytes",
+    ]
+    # Security-relevant response headers.
+    interesting = [
+        "content-type", "set-cookie", "location", "www-authenticate",
+        "access-control-allow-origin", "x-frame-options",
+        "content-security-policy", "strict-transport-security",
+    ]
+    hdr_lines = [f"  {k}: {v}" for k, v in resp.headers.items() if k.lower() in interesting]
+    if hdr_lines:
+        lines.append("Response headers:")
+        lines.extend(hdr_lines)
+    # Redact secrets in the returned body before showing it.
+    from quarr.core.secrets import redact
+    body_text = redact(resp.text[:1500])
+    lines.append("Body (first 1500 chars, secrets redacted):")
+    lines.append(body_text)
+    return "\n".join(lines)
+
+
 def jwt_analyze(token: str) -> str:
     """
     Analyze a JWT for common weaknesses: alg=none, weak/guessable HS256 secret,
