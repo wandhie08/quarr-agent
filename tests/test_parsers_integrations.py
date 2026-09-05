@@ -1,11 +1,13 @@
 """Unit tests for tool output parsers (Phase 2, Req 4)."""
 
+import json as _json
 from pathlib import Path
 
 import pytest
 
-from quarr.tools.parsers import parse_nmap_xml, parse_nikto, parse_nuclei_jsonl
 from quarr.core.exceptions import ToolOutputParseError
+from quarr.parsers.network import parse_tool_output
+from quarr.tools.parsers import parse_nikto, parse_nmap_xml, parse_nuclei_jsonl
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -75,3 +77,59 @@ def test_nuclei_empty_is_valid_no_findings():
 def test_nuclei_all_invalid_raises():
     with pytest.raises(ToolOutputParseError):
         parse_nuclei_jsonl("not json\nalso not json")
+
+
+# ---------------------------------------------------------------------------
+# Regression: parse_tool_output must recover structured data from the modern
+# integration summary format (found via the live agent harness — service
+# enumeration was populating hosts with zero services because the summary
+# string was re-parsed with the legacy text regex instead of the embedded JSON).
+# ---------------------------------------------------------------------------
+
+
+def _summary(tool_parsed: dict, ok: bool = True) -> str:
+    """Reproduce registry._summarize output shape."""
+    header = f"[nmap] {'OK' if ok else 'FAILED'}"
+    return f"{header}\n{_json.dumps(tool_parsed, indent=2)}"
+
+
+@pytest.mark.unit
+def test_service_enumeration_recovers_services_from_embedded_json():
+    parsed = {
+        "hosts": [{"address": "127.0.0.1", "services": [
+            {"host": "127.0.0.1", "port": 8080, "protocol": "tcp",
+             "name": "http", "product": "Apache", "version": "2.4.25"},
+        ]}],
+        "services": [
+            {"host": "127.0.0.1", "port": 8080, "protocol": "tcp",
+             "name": "http", "product": "Apache", "version": "2.4.25"},
+        ],
+    }
+    out = parse_tool_output("service_enumeration", _summary(parsed))
+    assert len(out["services"]) == 1
+    assert out["services"][0]["port"] == 8080
+    # A primary host is derived for the state updater.
+    assert out["host"] == "127.0.0.1"
+
+
+@pytest.mark.unit
+def test_network_discovery_recovers_hosts_and_total_up():
+    parsed = {"hosts": [{"address": "127.0.0.1"}, {"address": "127.0.0.2"}], "services": []}
+    out = parse_tool_output("network_discovery", _summary(parsed))
+    assert len(out["hosts"]) == 2
+    assert out["total_up"] == 2
+
+
+@pytest.mark.unit
+def test_legacy_text_output_still_parsed():
+    # Classic nmap text (no embedded JSON header) must still go through NmapParser.
+    text = "Nmap scan report for 10.10.10.20\n80/tcp open http Apache 2.4.52\nNmap done"
+    out = parse_tool_output("service_enumeration", text)
+    assert out["host"] == "10.10.10.20"
+    assert any(s["port"] == 80 for s in out["services"])
+
+
+@pytest.mark.unit
+def test_non_integration_output_uses_generic_parser():
+    out = parse_tool_output("some_unknown_tool", "just some text output\nline two")
+    assert out["tool"] == "some_unknown_tool"

@@ -48,13 +48,35 @@ class AuditLogger:
         self._logger = logging.getLogger(f"quarr.audit.{id(self)}")
         self._logger.propagate = False
         self._logger.setLevel(logging.INFO)
-        # Avoid duplicate handlers on re-init in the same process.
+        # Avoid duplicate handlers on re-init in the same process. Close the
+        # underlying file descriptors before dropping the handlers, otherwise
+        # the RotatingFileHandler's open file leaks (ResourceWarning).
+        for h in self._logger.handlers[:]:
+            h.close()
         self._logger.handlers.clear()
         handler = logging.handlers.RotatingFileHandler(
             path, maxBytes=rotate_max_bytes, backupCount=rotate_backups
         )
         handler.setFormatter(logging.Formatter("%(message)s"))
         self._logger.addHandler(handler)
+
+    def close(self) -> None:
+        """Close audit file handlers and release their file descriptors.
+
+        Safe to call multiple times. Tests that create many short-lived
+        AuditLogger instances should call this to avoid leaking open files.
+        """
+        for h in self._logger.handlers[:]:
+            h.close()
+            self._logger.removeHandler(h)
+
+    def __del__(self):
+        # Safety net: release file descriptors on GC so short-lived instances
+        # don't emit ResourceWarning for the underlying rotating log file.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _seed_sequence(self) -> int:
         """Seed the sequence counter from the last line of an existing file."""

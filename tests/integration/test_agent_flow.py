@@ -5,7 +5,7 @@ import pytest
 import quarr.core.agent as agent_mod
 from quarr.core.agent import QuarrAgent
 from quarr.core.models import Engagement
-from tests.conftest import MockLLM, make_tool_call, make_final
+from tests.conftest import MockLLM, make_final, make_tool_call
 
 
 @pytest.mark.integration

@@ -10,14 +10,9 @@ Agent tidak bisa langsung jump dari observation ke confirmed.
 """
 
 import logging
-from typing import Optional, List
-from datetime import datetime
 
-from quarr.core.models import (
-    PentestState, Finding, Observation,
-    FindingStatus, Severity
-)
-from quarr.knowledge.base import get_cwe_for_finding, get_cvss_range
+from quarr.core.models import Finding, FindingStatus, PentestState
+from quarr.knowledge.base import get_cwe_for_finding
 
 logger = logging.getLogger("quarr.validator")
 
@@ -56,7 +51,7 @@ class FindingValidator:
         finding: Finding,
         new_status: FindingStatus,
         justification: str = "",
-        evidence: Optional[str] = None,
+        evidence: str | None = None,
     ) -> bool:
         """
         Transition a finding to new status.
@@ -102,7 +97,7 @@ class FindingValidator:
         return True
 
     @staticmethod
-    def auto_validate_findings(state: PentestState) -> List[str]:
+    def auto_validate_findings(state: PentestState) -> list[str]:
         """
         Auto-advance findings yang punya cukup evidence.
 

@@ -70,7 +70,8 @@ class ToolIntegration(ABC):
         try:
             parsed = self.parse_output(res.stdout)
         except ToolOutputParseError as e:
-            logger.error("tool_output_parse_error", tool=self.name, **e.context)
+            # Merge so a "tool" key in e.context cannot collide with tool=.
+            logger.error("tool_output_parse_error", **{"tool": self.name, **e.context})
             return ToolResult(
                 tool_name=self.name or self.binary_name,
                 success=False,

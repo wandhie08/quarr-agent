@@ -14,8 +14,6 @@ Sources:
 - MITRE ATT&CK mapping
 """
 
-from typing import List, Dict, Optional
-
 
 # ============================================================
 # OWASP WSTG — Web Security Testing Guide
@@ -329,8 +327,8 @@ CVSS_REFERENCE = {
 
 def retrieve_knowledge(
     phase: str = None,
-    services: List[str] = None,
-    technologies: List[str] = None,
+    services: list[str] = None,
+    technologies: list[str] = None,
     finding_type: str = None,
     query: str = None,
     max_results: int = 5,
@@ -354,7 +352,7 @@ def retrieve_knowledge(
 
     # 1. OWASP WSTG berdasarkan phase
     if phase:
-        for key, wstg in OWASP_WSTG.items():
+        for wstg in OWASP_WSTG.values():
             if wstg["phase"] == phase:
                 results.append(f"[{wstg['id']}] {wstg['title']}: {wstg['description']}")
 
@@ -385,7 +383,7 @@ def retrieve_knowledge(
     # 3. OWASP API Top 10 jika API-related
     api_keywords = ["api", "rest", "graphql", "endpoint", "json", "jwt"]
     if any(k in query_lower for k in api_keywords) or any("api" in s.lower() for s in services):
-        for key, api in OWASP_API_TOP10.items():
+        for api in OWASP_API_TOP10.values():
             if query_lower and any(w in api["title"].lower() or w in api["description"].lower()
                                    for w in query_lower.split()):
                 results.append(f"[{api['id']}] {api['title']}: {api['description']}\n  Test: {api['test']}")
@@ -393,7 +391,7 @@ def retrieve_knowledge(
     # 3b. OWASP Mobile Top 10 jika mobile-related
     mobile_keywords = ["mobile", "android", "ios", "apk", "app", "adb", "frida", "objection", "deeplink", "webview"]
     if any(k in query_lower for k in mobile_keywords):
-        for key, mob in OWASP_MOBILE_TOP10.items():
+        for mob in OWASP_MOBILE_TOP10.values():
             results.append(f"[{mob['id']}] {mob['title']}: {mob['description']}\n  Test: {mob['test']}")
             if len(results) >= max_results:
                 break
@@ -427,11 +425,11 @@ def retrieve_knowledge(
 
     # 6. Query-based fallback
     if query and not results:
-        for key, wstg in OWASP_WSTG.items():
+        for wstg in OWASP_WSTG.values():
             if any(w in wstg["title"].lower() or w in wstg["description"].lower()
                    for w in query_lower.split()):
                 results.append(f"[{wstg['id']}] {wstg['title']}: {wstg['description']}")
-        for cwe_id, cwe in CWE_DATABASE.items():
+        for cwe in CWE_DATABASE.values():
             if any(w in cwe["name"].lower() or w in cwe["description"].lower()
                    for w in query_lower.split()):
                 results.append(f"[{cwe['id']}] {cwe['name']}: {cwe['remediation']}")
@@ -479,7 +477,7 @@ def retrieve_knowledge(
     return "RELEVANT SECURITY KNOWLEDGE:\n" + "\n\n".join(unique)
 
 
-def get_cwe_for_finding(finding_title: str) -> Optional[Dict]:
+def get_cwe_for_finding(finding_title: str) -> dict | None:
     """Get CWE info based on finding title keywords."""
     title_lower = finding_title.lower()
     keyword_map = {

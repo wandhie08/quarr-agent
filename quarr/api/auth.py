@@ -10,11 +10,10 @@ auth.py - Authentication & RBAC for the Web API (Phase 6, professional).
 import secrets as _secrets
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from datetime import UTC, datetime, timedelta
 
-import jwt
 import bcrypt
+import jwt
 
 from quarr.core.exceptions import QuarrError
 from quarr.core.logging import get_logger
@@ -44,7 +43,7 @@ class User:
 
 @dataclass
 class UserStore:
-    users: Dict[str, User] = field(default_factory=dict)
+    users: dict[str, User] = field(default_factory=dict)
 
     def add(self, username: str, password: str, role: str = "operator") -> User:
         if role not in ROLES:
@@ -53,7 +52,7 @@ class UserStore:
         self.users[username] = user
         return user
 
-    def verify(self, username: str, password: str) -> Optional[User]:
+    def verify(self, username: str, password: str) -> User | None:
         user = self.users.get(username)
         if not user:
             return None
@@ -82,7 +81,7 @@ class TokenService:
         self.refresh_ttl = timedelta(minutes=refresh_ttl_min)
 
     def _make(self, sub: str, role: str, token_type: str, ttl: timedelta) -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload = {
             "sub": sub,
             "role": role,
@@ -98,7 +97,7 @@ class TokenService:
     def refresh_token(self, sub: str, role: str) -> str:
         return self._make(sub, role, "refresh", self.refresh_ttl)
 
-    def decode(self, token: str, expected_type: Optional[str] = None) -> dict:
+    def decode(self, token: str, expected_type: str | None = None) -> dict:
         try:
             payload = jwt.decode(token, self.secret, algorithms=[self.algorithm])
         except jwt.ExpiredSignatureError as e:
@@ -117,7 +116,7 @@ class LoginRateLimiter:
     def __init__(self, max_per_min: int = 5, clock=None):
         self.max_per_min = max_per_min
         self._clock = clock or time.monotonic
-        self._hits: Dict[str, list] = {}
+        self._hits: dict[str, list] = {}
 
     def check(self, client_id: str) -> bool:
         now = self._clock()

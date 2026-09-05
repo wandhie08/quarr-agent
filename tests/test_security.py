@@ -1,19 +1,16 @@
 """Unit tests for Phase 4 security components."""
 
-import logging
 
 import pytest
 
-from quarr.core import secrets
-from quarr.core.config import Settings, EnvSecretProvider, build_secret_provider
-from quarr.core import permissions
-from quarr.core.scope import ScopeLimiter
+from quarr.core import permissions, secrets
 from quarr.core.approval import ApprovalWorkflow
-from quarr.core.policy import PolicyEngine, PolicyViolation
-from quarr.core.models import Engagement, RiskLevel
-from quarr.core.exceptions import PolicyViolationError, ConfigValidationError
+from quarr.core.config import EnvSecretProvider, Settings, build_secret_provider
+from quarr.core.exceptions import ConfigValidationError, PolicyViolationError
 from quarr.core.logging import configure_logging, get_logger
-
+from quarr.core.models import Engagement, RiskLevel
+from quarr.core.policy import PolicyEngine
+from quarr.core.scope import ScopeLimiter
 
 # ---- secrets ----
 
@@ -74,7 +71,8 @@ def test_vault_provider_unreachable_raises(monkeypatch):
         def __init__(self, *a, **k): pass
         def is_authenticated(self): return False
 
-    import sys, types
+    import sys
+    import types
     fake_hvac = types.ModuleType("hvac")
     fake_hvac.Client = FakeClient
     monkeypatch.setitem(sys.modules, "hvac", fake_hvac)

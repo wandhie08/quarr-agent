@@ -2,7 +2,7 @@
 
 import pytest
 
-from quarr.knowledge.base import retrieve_knowledge, get_cwe_for_finding, get_cvss_range
+from quarr.knowledge.base import get_cvss_range, get_cwe_for_finding, retrieve_knowledge
 
 
 @pytest.mark.unit

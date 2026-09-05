@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from quarr.tools.integrations.hydra import HydraIntegration
-from quarr.tools.integrations.hashcat import HashcatIntegration
-from quarr.tools.integrations.john import JohnIntegration
-from quarr.tools.integrations import _validate
-from quarr.tools.executor import ExecResult
 from quarr.core.exceptions import ArgumentValidationError
 from quarr.core.models import RiskLevel
+from quarr.tools.executor import ExecResult
+from quarr.tools.integrations import _validate
+from quarr.tools.integrations.hashcat import HashcatIntegration
+from quarr.tools.integrations.hydra import HydraIntegration
+from quarr.tools.integrations.john import JohnIntegration
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

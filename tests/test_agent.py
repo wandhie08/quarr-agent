@@ -2,10 +2,10 @@
 
 import pytest
 
-from quarr.core.agent import QuarrAgent
-from quarr.core.models import Engagement
-from quarr.core.exceptions import ToolError
 import quarr.core.agent as agent_mod
+from quarr.core.agent import QuarrAgent
+from quarr.core.exceptions import ToolError
+from quarr.core.models import Engagement
 
 
 class MockLLM:

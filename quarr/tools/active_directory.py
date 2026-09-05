@@ -5,10 +5,9 @@ Impacket-based AD tools + Kerberos attacks.
 Semua tools mengikuti arsitektur V1 (LLM pilih tool, executor tentukan command).
 """
 
-import subprocess
-import shlex
 import re
-from typing import Dict, Any
+import shlex
+import subprocess
 
 
 def _run(cmd: str, timeout: int = 120) -> str:

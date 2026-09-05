@@ -33,13 +33,18 @@ class ConnectionManager:
     @staticmethod
     def _redact_payload(event: dict[str, Any]) -> dict[str, Any]:
         safe = json.loads(json.dumps(event, default=str))
-        # Redact any string values that may contain secrets.
-        data = safe.get("data")
-        if isinstance(data, str):
-            safe["data"] = redact(data)
-        elif isinstance(data, dict):
-            safe["data"] = {k: (redact(v) if isinstance(v, str) else v) for k, v in data.items()}
-        return safe
+
+        def _scrub(value):
+            if isinstance(value, str):
+                return redact(value)
+            if isinstance(value, dict):
+                return {k: _scrub(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_scrub(v) for v in value]
+            return value
+
+        # Recursively redact all string values (nested dicts/lists included).
+        return _scrub(safe)
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         payload = self._redact_payload(event)
@@ -66,8 +71,18 @@ manager = ConnectionManager()
 
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Basic WS endpoint: send a 'connected' event then keep the channel open."""
+    """Authenticated WS endpoint: send a 'connected' event then keep the channel
+    open. Requires a valid access token (?token=...) — the broadcast stream can
+    carry agent status/finding events and must not be exposed anonymously."""
     from starlette.websockets import WebSocketDisconnect
+
+    from quarr.api.live import _authenticate
+
+    token = websocket.query_params.get("token")
+    if _authenticate(token) is None:
+        # Reject before accept() so anonymous clients cannot hold a connection.
+        await websocket.close(code=4401)
+        return
 
     await manager.connect(websocket)
     await websocket.send_json({"type": "connected", "data": "ok"})

@@ -13,22 +13,25 @@ Security-first REST API for QUARR:
 All responses are redacted of secrets (Phase 4).
 """
 
-import io
+import contextlib
 import json
 from pathlib import Path
-from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from quarr.api import security as sec
+from quarr.api.auth import build_user_store
+from quarr.api.websocket import manager
 from quarr.core import persistence
+from quarr.core import timeline as timeline_mod
 from quarr.core.config import Settings
 from quarr.core.dedup import deduplicate
 from quarr.core.logging import get_logger
-from quarr.core.models import Engagement, Finding, FindingStatus, PentestState, Severity
+from quarr.core.models import Engagement, FindingStatus, PentestState, Severity
 from quarr.core.reporter import (
     export_json,
     generate_executive_summary,
@@ -36,15 +39,34 @@ from quarr.core.reporter import (
     render_html,
 )
 from quarr.core.secrets import redact
-from quarr.core import timeline as timeline_mod
-from quarr.core.evidence import EvidenceCollector
-from quarr.api import security as sec
-from quarr.api.auth import build_user_store
-from quarr.api.websocket import manager
 
 logger = get_logger("quarr.api")
 
-app = FastAPI(title="QUARR API", version="2.0", description="Cyber Operations API")
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Startup: refuse to serve with an insecure JWT secret (fail closed against
+    # token forgery). This runs on real server startup, not on import, so tests
+    # that override the secret are unaffected.
+    sec.assert_secure_config()
+    # Wire real QuarrAgent factories unless already configured (e.g. by tests).
+    if _agent_factory is None:
+        try:
+            from quarr.api.wiring import wire_agents
+
+            wire_agents(_settings)
+        except Exception as e:  # never block startup on wiring issues
+            logger.warning("agent_wiring_failed", error=str(e))
+    yield
+    # Shutdown: nothing to tear down currently.
+
+
+app = FastAPI(
+    title="QUARR API",
+    version="2.0",
+    description="Cyber Operations API",
+    lifespan=_lifespan,
+)
 
 _settings = Settings()
 sec.init_security(_settings, build_user_store(_settings))
@@ -126,9 +148,9 @@ class ReportRequest(BaseModel):
 
 
 class FindingUpdate(BaseModel):
-    severity: Optional[str] = None
-    status: Optional[str] = None
-    confidence: Optional[float] = None
+    severity: str | None = None
+    status: str | None = None
+    confidence: float | None = None
 
 
 # ------------------------------------------------------------------ auth
@@ -159,9 +181,15 @@ def refresh(req: RefreshRequest):
         payload = sec.token_service().decode(req.refresh_token, expected_type="refresh")
     except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e.message)) from e
+    # Re-resolve the user from the store so a removed/downgraded account cannot
+    # keep elevated privileges via a still-valid refresh token.
+    store = sec.user_store()
+    current = store.users.get(payload["sub"])
+    if current is None:
+        raise HTTPException(status_code=401, detail="User no longer exists")
     ts = sec.token_service()
     return {
-        "access_token": ts.access_token(payload["sub"], payload["role"]),
+        "access_token": ts.access_token(current.username, current.role),
         "token_type": "bearer",
     }
 
@@ -181,7 +209,7 @@ def list_engagements(user: dict = Depends(sec.require_role("viewer"))):
 @app.post("/api/engagements", status_code=201)
 def create_engagement(req: CreateEngagementRequest,
                       user: dict = Depends(sec.require_role("operator"))):
-    from quarr.core.validators.target import normalize, TargetValidationError
+    from quarr.core.validators.target import TargetValidationError, normalize
 
     targets = []
     for t in req.allowed_targets:
@@ -189,11 +217,17 @@ def create_engagement(req: CreateEngagementRequest,
             targets.append(normalize(t))
         except TargetValidationError as e:
             raise HTTPException(status_code=422, detail=f"Invalid target: {t}") from e
+    excluded = []
+    for t in req.excluded_targets:
+        try:
+            excluded.append(normalize(t))
+        except TargetValidationError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid excluded target: {t}") from e
     state = PentestState()
     state.engagement = Engagement(
         name=req.name or "Unnamed Assessment",
         allowed_targets=targets,
-        excluded_targets=req.excluded_targets,
+        excluded_targets=excluded,
     )
     persistence.save_state(state)
     logger.info("engagement_created", id=state.engagement.id, by=user["username"])
@@ -287,7 +321,7 @@ def dedup_findings(engagement_id: str, dry_run: bool = True,
 
 
 @app.get("/api/engagements/{engagement_id}/timeline")
-def get_timeline(engagement_id: str, kind: Optional[str] = None,
+def get_timeline(engagement_id: str, kind: str | None = None,
                  user: dict = Depends(sec.require_role("viewer"))):
     state = _load_or_404(engagement_id)
     events = timeline_mod.build_timeline(state)
@@ -343,7 +377,8 @@ def download_report(engagement_id: str, fmt: str = "html", type: str = "executiv
                     user: dict = Depends(sec.require_role("viewer"))):
     state = _load_or_404(engagement_id)
     if fmt == "json":
-        import tempfile, os
+        import os
+        import tempfile
         tmp = tempfile.mktemp(suffix=".json")
         export_json(state, tmp)
         content = Path(tmp).read_text()
@@ -354,7 +389,7 @@ def download_report(engagement_id: str, fmt: str = "html", type: str = "executiv
         try:
             import weasyprint
         except ImportError:
-            raise HTTPException(status_code=501, detail="PDF export unavailable (WeasyPrint not installed)")
+            raise HTTPException(status_code=501, detail="PDF export unavailable (WeasyPrint not installed)") from None
         html = render_html(state, type)
         pdf = weasyprint.HTML(string=html).write_pdf()
         return Response(pdf, media_type="application/pdf",
@@ -394,8 +429,8 @@ async def run_query(engagement_id: str, req: QueryRequest,
 
 # ------------------------------------------------------------------ websocket
 
-from quarr.api.websocket import websocket_endpoint  # noqa: E402
 from quarr.api.live import live_console_endpoint  # noqa: E402
+from quarr.api.websocket import websocket_endpoint  # noqa: E402
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
 app.add_api_websocket_route("/ws/live", live_console_endpoint)

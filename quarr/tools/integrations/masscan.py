@@ -41,8 +41,12 @@ class MasscanIntegration(ToolIntegration):
             raise ToolOutputParseError("Malformed masscan JSON", context={"error": str(e)}) from e
         services = []
         for rec in records:
+            if not isinstance(rec, dict):
+                continue  # skip non-object elements instead of crashing
             ip = rec.get("ip")
             for p in rec.get("ports", []):
+                if not isinstance(p, dict):
+                    continue
                 services.append(
                     {
                         "host": ip,

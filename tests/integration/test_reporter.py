@@ -5,7 +5,9 @@ import json
 import pytest
 
 from quarr.core.reporter import (
-    generate_executive_summary, generate_technical_report, export_json,
+    export_json,
+    generate_executive_summary,
+    generate_technical_report,
 )
 
 

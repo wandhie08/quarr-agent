@@ -10,10 +10,18 @@ Automated security operations:
 """
 
 import os
-import json
 from datetime import datetime
-from typing import Dict, Any, List
 
+
+def _is_active(text: str) -> bool:
+    """True if service/firewall status text indicates 'active'.
+
+    Guards against the substring trap where "active" in "inactive" is True —
+    which previously reported a disabled firewall/service as active in
+    compliance reports.
+    """
+    t = (text or "").lower()
+    return "inactive" not in t and ("active" in t or "chain" in t)
 
 # ============================================================
 # Security Health Score
@@ -25,21 +33,28 @@ def security_health_check() -> str:
     Runs checks and produces a score.
     """
     from quarr.tools.blue_team import (
-        firewall_status, active_connections, port_audit,
-        process_monitor, user_audit, cron_audit, file_integrity_check
+        active_connections,
+        process_monitor,
     )
     from quarr.tools.vuln_assess import hardening_check, patch_assessment
 
     results = []
-    issues = 0
+    threats = 0  # active threats (suspicious conns/processes)
 
     # 1. Hardening
     results.append("═══ SECURITY HEALTH CHECK ═══\n")
     harden = hardening_check()
     results.append(harden)
 
-    # Count failures
-    issues += harden.count("❌")
+    # Parse the hardening pass percentage as the baseline posture score. Fall
+    # back to counting failures if the expected "(NN%)" marker is absent.
+    import re as _re
+    m = _re.search(r"\((\d+)%\)", harden)
+    if m:
+        hardening_pct = int(m.group(1))
+    else:
+        fails = harden.count("❌")
+        hardening_pct = max(0, 100 - fails * 10)
 
     # 2. Patches
     results.append("\n\n═══ PATCH STATUS ═══")
@@ -50,25 +65,27 @@ def security_health_check() -> str:
     results.append("\n\n═══ NETWORK ═══")
     conns = active_connections("suspicious")
     if "No suspicious" not in conns:
-        issues += 1
-        results.append(f"⚠️ Suspicious connections detected")
+        threats += 1
+        results.append("⚠️ Suspicious connections detected")
     else:
         results.append("✅ No suspicious connections")
 
     # 4. Process check
     procs = process_monitor()
     if "SUSPICIOUS PROCESSES" in procs:
-        issues += 1
+        threats += 1
         results.append("⚠️ Suspicious processes detected")
     else:
         results.append("✅ No suspicious processes")
 
-    # Score
-    max_score = 100
-    penalty = issues * 10
-    score = max(0, max_score - penalty)
+    # Score: start from the real hardening percentage (not an arbitrary penalty
+    # that saturates to 0), then subtract for each ACTIVE threat found. This
+    # keeps the overall score aligned with the hardening report instead of
+    # diverging from it.
+    score = max(0, min(100, hardening_pct - threats * 20))
 
     results.append(f"\n\n═══ OVERALL SCORE: {score}/100 ═══")
+    results.append(f"(hardening baseline {hardening_pct}%, {threats} active threat(s))")
     if score >= 80:
         results.append("🟢 HEALTHY")
     elif score >= 50:
@@ -76,7 +93,6 @@ def security_health_check() -> str:
     else:
         results.append("🔴 AT RISK")
 
-    results.append(f"Issues found: {issues}")
     results.append(f"Timestamp: {datetime.now().isoformat()}")
 
     return "\n".join(results)
@@ -153,12 +169,12 @@ def get_playbook(name: str) -> str:
     lines = [
         f"=== PLAYBOOK: {pb['name']} ===",
         f"Description: {pb['description']}",
-        f"\nSteps:",
+        "\nSteps:",
     ]
     for i, step in enumerate(pb["steps"], 1):
         lines.append(f"  {i}. {step['action']}({step['args']}) — {step['description']}")
 
-    lines.append(f"\nRecommended Actions:")
+    lines.append("\nRecommended Actions:")
     for action in pb.get("auto_actions", []):
         lines.append(f"  → {action}")
 
@@ -179,9 +195,17 @@ def security_metrics() -> str:
     failed = log_analysis("auth", lines=500, filter_pattern="Failed")
     metrics["failed_logins_24h"] = failed.count("Failed")
 
-    # Active connections
+    # Active connections. `ss ... state established` filters BY state, so the
+    # State column ("ESTAB") is not printed in the rows — counting "ESTAB"
+    # matched nothing and the metric was always 0. Count the actual data rows
+    # instead (skip the header and any tool error/empty markers).
     conns_raw = active_connections("established")
-    metrics["active_connections"] = len([l for l in conns_raw.split("\n") if "ESTAB" in l])
+    conn_lines = [
+        ln for ln in conns_raw.split("\n")
+        if ln.strip()
+        and not ln.startswith(("[", "Netid", "State", "Recv-Q"))
+    ]
+    metrics["active_connections"] = len(conn_lines)
 
     # Listening ports
     from quarr.tools.blue_team import port_audit
@@ -216,7 +240,7 @@ def compliance_report(framework: str = "cis") -> str:
     Generate compliance status report.
     framework: cis (CIS Benchmark), pci (PCI-DSS basic), hipaa (HIPAA basic)
     """
-    from quarr.tools.vuln_assess import linux_security_audit, hardening_check
+    from quarr.tools.vuln_assess import hardening_check, linux_security_audit
 
     if framework == "cis":
         audit = linux_security_audit()
@@ -231,19 +255,25 @@ def compliance_report(framework: str = "cis") -> str:
         )
 
     elif framework == "pci":
-        checks = []
+        checks = []          # (name, passed) — automatically verified controls
+        manual = []          # controls that require manual review (not scored)
         # PCI-DSS basic checks
         from quarr.tools.blue_team import firewall_status
         fw = firewall_status()
-        checks.append(("Req 1: Firewall", "active" in fw.lower() or "Chain" in fw))
+        checks.append(("Req 1: Firewall", _is_active(fw)))
 
         from quarr.tools.vuln_assess import config_audit
         ssh = config_audit("ssh")
         checks.append(("Req 2: No defaults", "PermitRootLogin no" in ssh or "permitrootlogin no" in ssh.lower()))
-        checks.append(("Req 4: Encryption", True))  # Placeholder
-        checks.append(("Req 6: Secure systems", True))  # Placeholder
-        checks.append(("Req 8: Unique IDs", True))  # Placeholder
         checks.append(("Req 10: Logging", os.path.exists("/var/log/auth.log")))
+
+        # Controls that cannot be verified automatically must NOT be reported as
+        # passing — that would misrepresent compliance in a professional report.
+        manual.extend([
+            "Req 4: Encrypt transmission of cardholder data",
+            "Req 6: Develop/maintain secure systems",
+            "Req 8: Unique IDs & authentication",
+        ])
 
         lines = [f"═══ PCI-DSS BASIC COMPLIANCE ═══\nDate: {datetime.now().strftime('%Y-%m-%d')}\n"]
         passed = 0
@@ -252,7 +282,48 @@ def compliance_report(framework: str = "cis") -> str:
             lines.append(f"  {icon} {name}")
             if ok:
                 passed += 1
-        lines.append(f"\nScore: {passed}/{len(checks)}")
+        for name in manual:
+            lines.append(f"  ⚠️  {name} — MANUAL REVIEW REQUIRED (not scored)")
+        lines.append(f"\nScore (automated checks only): {passed}/{len(checks)}")
+        lines.append(f"Manual review required: {len(manual)} control(s)")
+        lines.append("\nNOTE: Automated checks are a partial subset of PCI-DSS. "
+                     "A full assessment requires manual review of the flagged controls.")
         return "\n".join(lines)
 
-    return f"[ERROR] Unknown framework: {framework}. Available: cis, pci"
+    elif framework == "hipaa":
+        # HIPAA Security Rule — basic technical safeguards that can be checked.
+        checks = []
+        manual = []
+        checks.append(("§164.312(b): Audit logging", os.path.exists("/var/log/auth.log")))
+
+        from quarr.tools.vuln_assess import config_audit
+        ssh = config_audit("ssh")
+        checks.append(("§164.312(e): Transmission security (SSH hardening)",
+                       "PermitRootLogin no" in ssh or "permitrootlogin no" in ssh.lower()))
+
+        from quarr.tools.blue_team import firewall_status
+        fw = firewall_status()
+        checks.append(("§164.312(a): Access control (firewall)",
+                       _is_active(fw)))
+
+        manual.extend([
+            "§164.312(a)(2)(iv): Encryption of ePHI at rest",
+            "§164.308: Administrative safeguards (policies, training)",
+            "§164.310: Physical safeguards (facility access)",
+        ])
+
+        lines = [f"═══ HIPAA SECURITY RULE (BASIC) ═══\nDate: {datetime.now().strftime('%Y-%m-%d')}\n"]
+        passed = 0
+        for name, ok in checks:
+            lines.append(f"  {'✅' if ok else '❌'} {name}")
+            if ok:
+                passed += 1
+        for name in manual:
+            lines.append(f"  ⚠️  {name} — MANUAL REVIEW REQUIRED (not scored)")
+        lines.append(f"\nScore (automated checks only): {passed}/{len(checks)}")
+        lines.append(f"Manual review required: {len(manual)} safeguard(s)")
+        lines.append("\nNOTE: Technical safeguards only. Administrative and physical "
+                     "safeguards require manual assessment.")
+        return "\n".join(lines)
+
+    return f"[ERROR] Unknown framework: {framework}. Available: cis, pci, hipaa"

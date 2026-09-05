@@ -1,12 +1,17 @@
 """Unit tests for Web API auth & RBAC (Phase 6 professional)."""
 
-import time
 
 import pytest
 
 from quarr.api.auth import (
-    TokenService, UserStore, LoginRateLimiter, build_user_store,
-    hash_password, verify_password, AuthError, ROLES,
+    ROLES,
+    AuthError,
+    LoginRateLimiter,
+    TokenService,
+    UserStore,
+    build_user_store,
+    hash_password,
+    verify_password,
 )
 
 

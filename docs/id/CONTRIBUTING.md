@@ -366,6 +366,60 @@ class TestFinding:
         assert finding.severity_rank == expected
 ```
 
+### Tingkatan Testing
+
+Test QUARR disusun dalam tiga tingkatan, dari cepat/terisolasi hingga nyata:
+
+| Tingkat | Fungsi | Mocking | Jalan secara default? |
+|---------|--------|---------|-----------------------|
+| **Unit / Skenario** | Kebenaran logika & deteksi | Subprocess/LLM di-mock | ✅ Ya |
+| **Live read-only** | Menjalankan perintah nyata di host lokal, hanya baca | Tidak ada | ❌ Opt-in |
+| **Live mutating** | Menjalankan perintah yang mengubah state (mis. iptables) | Tidak ada | ❌ Double opt-in |
+
+Test live ditandai `@pytest.mark.live` dan config default menjalankan
+`-m 'not live'`, jadi **tidak pernah** jalan di CI atau `pytest` biasa.
+
+Timeout per-test (`--timeout=60`, via `pytest-timeout`) ditegakkan secara global
+sehingga test yang macet (mis. WebSocket yang nge-block) tidak akan pernah
+menggantung seluruh suite.
+
+### Test skenario Blue Team
+
+Skenario incident-response yang deterministik & di-mock (tanpa perintah nyata):
+
+```bash
+# Skenario brute-force SSH + malware/C2/persistence
+python3 -m pytest tests/test_blue_team_scenarios.py -v
+```
+
+### Harness tool live (opt-in)
+
+**Tool red/network terhadap target lab milik Anda:**
+
+```bash
+export QUARR_LIVE_TARGET="127.0.0.1"           # mesin lab yang Anda kontrol
+export QUARR_LIVE_URL="http://127.0.0.1:8080"  # opsional, untuk web tools
+python3 -m pytest tests/test_live_tools.py -m live -v
+```
+
+**Tool blue-team di host LOKAL (hanya baca):**
+
+```bash
+export QUARR_LIVE_BLUE=1
+python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+**Tool blue-team yang mengubah state (mengubah iptables, butuh root):**
+
+```bash
+export QUARR_LIVE_BLUE=1
+export QUARR_LIVE_BLUE_MUTATE=1   # hanya jika Anda menerima perubahan iptables
+sudo -E python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+> ⚠️ Hanya arahkan harness live ke host yang Anda miliki atau berhak uji.
+> Tingkat mutating memblokir/membuka IP TEST-NET (RFC 5737) dan selalu bersih-bersih.
+
 ---
 
 ## 8. Mengirimkan Perubahan

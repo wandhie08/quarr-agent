@@ -2,11 +2,11 @@
 
 import pytest
 
-from quarr.tools.integrations.sqlmap import SqlmapIntegration
-from quarr.tools.integrations.dirsearch import DirsearchIntegration
-from quarr.tools.integrations.whatweb import WhatWebIntegration
-from quarr.tools.integrations.sslscan import SSLScanIntegration
 from quarr.tools.executor import ExecResult
+from quarr.tools.integrations.dirsearch import DirsearchIntegration
+from quarr.tools.integrations.sqlmap import SqlmapIntegration
+from quarr.tools.integrations.sslscan import SSLScanIntegration
+from quarr.tools.integrations.whatweb import WhatWebIntegration
 
 
 class FakeExec:

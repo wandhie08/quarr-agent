@@ -8,10 +8,10 @@ Extended vulnerability assessment:
 - Hardening check
 """
 
-import subprocess
-import shlex
 import os
 import re
+import shlex
+import subprocess
 
 
 def _shell(cmd: str, timeout: int = 30) -> str:
@@ -105,7 +105,7 @@ def linux_security_audit() -> str:
     info.append("\n=== 4. PERMISSIONS ===")
     world_writable = _shell("find /etc /usr -type f -perm -o+w 2>/dev/null | head -5", timeout=10)
     if world_writable.strip() and "[No output]" not in world_writable:
-        findings.append(f"[HIGH] World-writable files in system dirs")
+        findings.append("[HIGH] World-writable files in system dirs")
         info.append(f"  World-writable: {world_writable.strip()}")
 
     # 5. Kernel security
@@ -212,7 +212,8 @@ def config_audit(service: str = "all") -> str:
         results.append("\n=== MYSQL CONFIG AUDIT ===")
         mysql_conf = _shell("find /etc/mysql -name '*.cnf' -exec grep -l 'bind-address\\|skip-networking' {} \\; 2>/dev/null", timeout=5)
         if mysql_conf.strip():
-            bind = _shell(f"grep 'bind-address' {mysql_conf.strip().split()[0]} 2>/dev/null | grep -v '^#'", timeout=3)
+            conf_path = shlex.quote(mysql_conf.strip().split()[0])
+            bind = _shell(f"grep 'bind-address' {conf_path} 2>/dev/null | grep -v '^#'", timeout=3)
             results.append(f"  bind-address: {bind.strip() or 'not set (⚠️ listening on all interfaces)'}")
         else:
             results.append("  MySQL not installed or no config found")
@@ -226,7 +227,7 @@ def hardening_check() -> str:
 
     # Firewall
     ufw = _shell("ufw status 2>/dev/null", timeout=3)
-    checks.append(("Firewall enabled", "active" in ufw.lower()))
+    checks.append(("Firewall enabled", "active" in ufw.lower() and "inactive" not in ufw.lower()))
 
     # SSH root login
     ssh_root = _shell("grep -i '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null", timeout=3)
@@ -258,7 +259,7 @@ def hardening_check() -> str:
 
     # Fail2ban
     f2b = _shell("systemctl is-active fail2ban 2>/dev/null", timeout=3)
-    checks.append(("Fail2ban active", "active" in f2b.lower()))
+    checks.append(("Fail2ban active", "active" in f2b.lower() and "inactive" not in f2b.lower()))
 
     # Build output
     passed = sum(1 for _, ok in checks if ok)
@@ -266,7 +267,7 @@ def hardening_check() -> str:
     score = (passed / total * 100) if total > 0 else 0
 
     lines = [
-        f"=== HARDENING CHECKLIST ===",
+        "=== HARDENING CHECKLIST ===",
         f"Score: {passed}/{total} ({score:.0f}%)\n",
     ]
     for name, ok in checks:
@@ -274,10 +275,10 @@ def hardening_check() -> str:
         lines.append(f"  {icon} {name}")
 
     if score >= 80:
-        lines.append(f"\n🟢 Good hardening posture")
+        lines.append("\n🟢 Good hardening posture")
     elif score >= 50:
-        lines.append(f"\n🟡 Moderate — needs improvement")
+        lines.append("\n🟡 Moderate — needs improvement")
     else:
-        lines.append(f"\n🔴 Poor — significant hardening needed")
+        lines.append("\n🔴 Poor — significant hardening needed")
 
     return "\n".join(lines)

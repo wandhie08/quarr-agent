@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.vulnerable.bankapp">
+    <uses-sdk android:minSdkVersion="19" android:targetSdkVersion="28"/>
+    <uses-permission android:name="android.permission.READ_SMS"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <application android:allowBackup="true" android:debuggable="true" android:usesCleartextTraffic="true">
+        <activity android:name="com.vulnerable.bankapp.MainActivity"/>
+        <activity android:name="com.vulnerable.bankapp.TransferActivity" android:exported="true">
+            <intent-filter>
+                <data android:scheme="bankapp" android:host="pay"/>
+            </intent-filter>
+        </activity>
+        <service android:name="com.vulnerable.bankapp.SyncService" android:exported="true"/>
+        <receiver android:name="com.vulnerable.bankapp.BootReceiver" android:exported="true"/>
+        <provider android:name="com.vulnerable.bankapp.DataProvider" android:exported="true"/>
+    </application>
+</manifest>

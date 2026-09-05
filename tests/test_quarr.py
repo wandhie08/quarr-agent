@@ -4,8 +4,9 @@ Run: python -m pytest tests/ -v
 Or:  python tests/test_quarr.py
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
@@ -17,8 +18,13 @@ def test_tools_registry():
 
 def test_models():
     from quarr.core.models import (
-        PentestState, Engagement, Host, Service,
-        Finding, Observation, FindingStatus, Severity
+        Engagement,
+        Finding,
+        FindingStatus,
+        Host,
+        PentestState,
+        Service,
+        Severity,
     )
     state = PentestState()
     eng = Engagement(name="Test", allowed_targets=["10.10.10.0/24"])
@@ -36,8 +42,8 @@ def test_models():
 
 
 def test_policy():
-    from quarr.core.policy import PolicyEngine, PolicyViolation
     from quarr.core.models import Engagement
+    from quarr.core.policy import PolicyEngine, PolicyViolation
     eng = Engagement(
         name="Test",
         allowed_targets=["10.10.10.0/24", "target.com"],
@@ -53,14 +59,14 @@ def test_policy():
     # Out of scope
     try:
         policy.authorize("service_enumeration", {"target": "192.168.1.1"}, eng)
-        assert False, "Should have raised"
+        raise AssertionError("Should have raised")
     except PolicyViolation:
         pass
 
     # Excluded
     try:
         policy.authorize("service_enumeration", {"target": "10.10.10.1"}, eng)
-        assert False, "Should have raised"
+        raise AssertionError("Should have raised")
     except PolicyViolation:
         pass
 
@@ -68,8 +74,8 @@ def test_policy():
 
 
 def test_validator():
-    from quarr.core.validator import FindingValidator
     from quarr.core.models import Finding, FindingStatus, Severity
+    from quarr.core.validator import FindingValidator
     f = Finding(
         title="SQL Injection", severity=Severity.CRITICAL,
         status=FindingStatus.OBSERVATION, asset="target.com"
@@ -81,7 +87,7 @@ def test_validator():
 
 
 def test_knowledge():
-    from quarr.knowledge.base import retrieve_knowledge, get_cwe_for_finding
+    from quarr.knowledge.base import get_cwe_for_finding, retrieve_knowledge
     k = retrieve_knowledge(phase="exploit", query="sql injection")
     assert len(k) > 0
     cwe = get_cwe_for_finding("SQL Injection")
@@ -110,8 +116,8 @@ def test_agent_creation():
 
 
 def test_reporter():
+    from quarr.core.models import Engagement, PentestState
     from quarr.core.reporter import generate_executive_summary, generate_technical_report
-    from quarr.core.models import PentestState, Engagement
     state = PentestState()
     state.engagement = Engagement(name="Test", allowed_targets=["target.com"])
     exec_sum = generate_executive_summary(state)

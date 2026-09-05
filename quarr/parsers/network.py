@@ -5,16 +5,16 @@ Mengubah output mentah dari Kali tools menjadi structured data.
 LLM tidak pernah melihat raw output — hanya parsed result.
 """
 
-import re
 import json
-from typing import List, Optional, Dict, Any
+import re
+from typing import Any
 
 
 class NmapParser:
     """Parse nmap output."""
 
     @staticmethod
-    def parse_host_discovery(raw_output: str) -> Dict[str, Any]:
+    def parse_host_discovery(raw_output: str) -> dict[str, Any]:
         hosts = []
         for match in re.finditer(
             r'Nmap scan report for (?:(\S+) \()?(\d+\.\d+\.\d+\.\d+)\)?',
@@ -45,7 +45,7 @@ class NmapParser:
         }
 
     @staticmethod
-    def parse_service_scan(raw_output: str) -> Dict[str, Any]:
+    def parse_service_scan(raw_output: str) -> dict[str, Any]:
         result = {
             "host": None, "hostname": None,
             "services": [], "os_detection": None, "raw_summary": ""
@@ -107,9 +107,9 @@ class SubdomainParser:
     """Parse subdomain enumeration output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
-        lines = [l.strip() for l in raw_output.strip().split('\n') if l.strip()]
-        subdomains = [l for l in lines if '.' in l and not l.startswith('[')]
+    def parse(raw_output: str) -> dict[str, Any]:
+        lines = [ln.strip() for ln in raw_output.strip().split('\n') if ln.strip()]
+        subdomains = [ln for ln in lines if '.' in ln and not ln.startswith('[')]
         return {
             "subdomains": subdomains,
             "total": len(subdomains),
@@ -121,7 +121,7 @@ class WebFingerprintParser:
     """Parse whatweb output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         technologies = []
         # WhatWeb format: https://target [200 OK] Apache[2.4.52], PHP[8.1]
         tech_pattern = re.compile(r'(\w[\w\-./]+)\[([^\]]*)\]')
@@ -151,7 +151,7 @@ class GobusterParser:
     """Parse gobuster output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         entries = []
         for line in raw_output.strip().split('\n'):
             line = line.strip()
@@ -181,7 +181,7 @@ class NucleiParser:
     """Parse nuclei JSONL output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         findings = []
         for line in raw_output.strip().split('\n'):
             line = line.strip()
@@ -232,7 +232,7 @@ class SQLMapParser:
     """Parse sqlmap output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         vulnerable = False
         injections = []
         dbms = None
@@ -267,7 +267,7 @@ class HydraParser:
     """Parse hydra output."""
 
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         credentials = []
         for line in raw_output.split('\n'):
             # [22][ssh] host: 10.10.10.20   login: admin   password: password123
@@ -296,7 +296,7 @@ class GenericParser:
     """Fallback parser."""
 
     @staticmethod
-    def parse(tool_name: str, raw_output: str, max_lines: int = 80) -> Dict[str, Any]:
+    def parse(tool_name: str, raw_output: str, max_lines: int = 80) -> dict[str, Any]:
         lines = raw_output.strip().split('\n')
         truncated = len(lines) > max_lines
         return {
@@ -310,8 +310,49 @@ class GenericParser:
 
 # === Router ===
 
-def parse_tool_output(tool_name: str, raw_output: str) -> Dict[str, Any]:
+def _extract_embedded_json(raw_output: str) -> dict[str, Any] | None:
+    """Extract the structured dict embedded by the modern integration layer.
+
+    ToolIntegration handlers return a summary string shaped like:
+
+        [nmap] OK
+        { ... json of ToolResult.parsed ... }
+
+    (see quarr/tools/registry._summarize). That structured data is
+    authoritative; re-parsing the summary text with the legacy regex parsers
+    loses fields such as discovered services. Returns the parsed dict, or None
+    if the output is not in that format.
+    """
+    if not raw_output:
+        return None
+    brace = raw_output.find("{")
+    if brace == -1:
+        return None
+    header = raw_output[:brace]
+    if "OK" not in header and "FAILED" not in header:
+        return None
+    try:
+        data = json.loads(raw_output[brace:])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def parse_tool_output(tool_name: str, raw_output: str) -> dict[str, Any]:
     """Pilih parser yang tepat berdasarkan tool name."""
+
+    # Modern integration handlers embed their structured result as JSON in the
+    # summary string (see registry._summarize). Prefer that authoritative data
+    # over re-parsing the summary text (which loses services, etc.).
+    embedded = _extract_embedded_json(raw_output)
+    if embedded is not None:
+        if tool_name == "network_discovery":
+            embedded.setdefault("total_up", len(embedded.get("hosts", [])))
+        elif tool_name == "service_enumeration" and not embedded.get("host"):
+            services = embedded.get("services", [])
+            if services:
+                embedded["host"] = services[0].get("host")
+        return embedded
 
     # Mobile tools → mobile parsers
     mobile_tools = {
@@ -319,7 +360,7 @@ def parse_tool_output(tool_name: str, raw_output: str) -> Dict[str, Any]:
         "adb_storage_check",
     }
     if tool_name in mobile_tools:
-        from mobile_parsers import parse_mobile_output
+        from quarr.parsers.mobile import parse_mobile_output
         return parse_mobile_output(tool_name, raw_output)
 
     parser_map = {

@@ -4,31 +4,30 @@ asyncio_mode = "auto"
 markers = [
     "unit: fast isolated unit tests",
     "integration: multi-component tests",
+    "live: executes real security tools against a live lab target (opt-in via QUARR_LIVE_TARGET; deselected by default)",
 ]
-addopts = "-ra"
+# `-ra` shows extra test summary info.
+# `--timeout` is a safety net: no single test may hang the suite (a denied
+# approval / stalled WebSocket previously blocked the run indefinitely).
+# `-m 'not live'` keeps the real-tool harness out of the default/CI run.
+addopts = "-ra --timeout=60 --timeout-method=thread -m 'not live'"
 
 [tool.coverage.run]
 source = ["quarr"]
+# NOTE: the large legacy tool modules (mobile/dfir/forensic/blue_team/etc.) are
+# intentionally NOT omitted anymore — hiding them made the coverage number
+# misleading. They are now measured honestly and count toward the total.
 omit = [
     "*/__pycache__/*",
     "*/venv/*",
     "tests/*",
-    # Large legacy tool modules not yet migrated to the Phase 2 integration
-    # layer; they get dedicated coverage in later work.
-    "quarr/tools/active_directory.py",
-    "quarr/tools/blue_team.py",
-    "quarr/tools/dfir.py",
-    "quarr/tools/forensic.py",
-    "quarr/tools/mobile.py",
-    "quarr/tools/secops.py",
-    "quarr/tools/threat_hunting.py",
-    "quarr/tools/threat_intel.py",
-    "quarr/tools/vuln_assess.py",
 ]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 60
+# Ratchet set to the current honest baseline (measured 59%). Raise this as the
+# legacy tool modules gain real tests; never lower it to hide a regression.
+fail_under = 58
 
 [tool.ruff]
 target-version = "py313"

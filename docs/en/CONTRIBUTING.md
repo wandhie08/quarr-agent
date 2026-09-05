@@ -366,6 +366,59 @@ class TestFinding:
         assert finding.severity_rank == expected
 ```
 
+### Testing Tiers
+
+QUARR tests are organized into three tiers, from fast/isolated to real-world:
+
+| Tier | What it does | Mocking | Runs by default? |
+|------|--------------|---------|------------------|
+| **Unit / Scenario** | Logic and detection correctness | Subprocess/LLM mocked | ✅ Yes |
+| **Live read-only** | Runs real commands on the local host, read-only | None | ❌ Opt-in |
+| **Live mutating** | Runs real state-changing commands (e.g. iptables) | None | ❌ Double opt-in |
+
+Live tests are marked `@pytest.mark.live` and the default config runs
+`-m 'not live'`, so they **never** run in CI or a normal `pytest`.
+
+A per-test timeout (`--timeout=60`, via `pytest-timeout`) is enforced globally
+so a stalled test (e.g. a blocked WebSocket) can never hang the whole suite.
+
+### Blue Team scenario tests
+
+Deterministic, mocked incident-response scenarios (no real commands):
+
+```bash
+# SSH brute-force + malware/C2/persistence scenarios
+python3 -m pytest tests/test_blue_team_scenarios.py -v
+```
+
+### Live tool harnesses (opt-in)
+
+**Red/network tools against a lab target you own:**
+
+```bash
+export QUARR_LIVE_TARGET="127.0.0.1"           # a lab box you control
+export QUARR_LIVE_URL="http://127.0.0.1:8080"  # optional, for web tools
+python3 -m pytest tests/test_live_tools.py -m live -v
+```
+
+**Blue-team tools on the LOCAL host (read-only):**
+
+```bash
+export QUARR_LIVE_BLUE=1
+python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+**Blue-team state-changing tools (modifies iptables, needs root):**
+
+```bash
+export QUARR_LIVE_BLUE=1
+export QUARR_LIVE_BLUE_MUTATE=1   # only if you accept iptables changes
+sudo -E python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+> ⚠️ Only point live harnesses at hosts you own or are authorized to test.
+> The mutating tier blocks/unblocks an RFC 5737 TEST-NET IP and always cleans up.
+
 ---
 
 ## 8. Submitting Changes

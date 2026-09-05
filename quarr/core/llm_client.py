@@ -16,20 +16,26 @@ import json
 import os
 import re
 import time
-import httpx
-from typing import Optional, Dict, Any, List
+from typing import Any
 
+import httpx
 from tenacity import (
-    retry, retry_if_exception_type, stop_after_attempt,
-    wait_exponential, before_sleep_log,
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
 )
 
+from quarr.core.circuit_breaker import CircuitBreaker
 from quarr.core.exceptions import (
-    LLMConnectionError, LLMTimeoutError, LLMRateLimitError, LLMResponseError,
+    LLMConnectionError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMTimeoutError,
 )
 from quarr.core.logging import get_logger
 from quarr.core.rate_limiter import TokenBucket
-from quarr.core.circuit_breaker import CircuitBreaker
 
 logger = get_logger("quarr.llm")
 
@@ -49,11 +55,11 @@ async def _do_request(
     url: str,
     payload: dict,
     timeout: float,
-    headers: Optional[dict] = None,
+    headers: dict | None = None,
     *,
     backend: str = "",
     model: str = "",
-    tolerate_400_substring: Optional[str] = None,
+    tolerate_400_substring: str | None = None,
 ) -> httpx.Response:
     """
     Execute an HTTP POST and map transport/HTTP errors to LLMError subclasses.
@@ -74,14 +80,14 @@ async def _do_request(
         raise LLMConnectionError(
             "Failed to connect to LLM backend",
             context={"backend": backend, "model": model}, cause=e,
-        )
+        ) from e
     except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
         elapsed = round(time.monotonic() - start, 2)
         logger.error("llm_timeout", backend=backend, model=model, elapsed=elapsed)
         raise LLMTimeoutError(
             "LLM request timed out",
             context={"elapsed": elapsed, "timeout": timeout}, cause=e,
-        )
+        ) from e
 
     status = response.status_code
 
@@ -140,10 +146,10 @@ class BaseLLMClient:
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
-        tools: Optional[List[Dict]] = None,
+        messages: list[dict[str, str]],
+        tools: list[dict] | None = None,
         max_tokens: int = 1024,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Returns:
         {
@@ -155,7 +161,7 @@ class BaseLLMClient:
         raise NotImplementedError
 
     @staticmethod
-    def parse_tool_call_from_text(text: str) -> Optional[Dict]:
+    def parse_tool_call_from_text(text: str) -> dict | None:
         """Parse tool call dari text response (fallback)."""
         text = text.strip()
 
@@ -201,7 +207,7 @@ class BaseLLMClient:
         return None
 
     @staticmethod
-    def _normalize_tool_call(data: dict) -> Optional[Dict]:
+    def _normalize_tool_call(data: dict) -> dict | None:
         if not isinstance(data, dict):
             return None
         if "tool" in data:
@@ -213,7 +219,7 @@ class BaseLLMClient:
         return None
 
     @staticmethod
-    def build_tool_prompt(tools: List[Dict]) -> str:
+    def build_tool_prompt(tools: list[dict]) -> str:
         """Build tool description untuk prompt-based fallback."""
         lines = [
             "AVAILABLE TOOLS:",
@@ -250,7 +256,7 @@ class BaseLLMClient:
         return "\n".join(lines)
 
     @staticmethod
-    def inject_tool_prompt(messages: List[Dict], tool_prompt: str) -> List[Dict]:
+    def inject_tool_prompt(messages: list[dict], tool_prompt: str) -> list[dict]:
         result = []
         injected = False
         for msg in messages:
@@ -286,10 +292,10 @@ class OpenAIClient(BaseLLMClient):
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
-        tools: Optional[List[Dict]] = None,
+        messages: list[dict[str, str]],
+        tools: list[dict] | None = None,
         max_tokens: int = 1024,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -316,7 +322,7 @@ class OpenAIClient(BaseLLMClient):
             raise LLMResponseError(
                 "Failed to parse OpenAI response as JSON",
                 context={"parse_error": str(e)}, cause=e,
-            )
+            ) from e
 
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
@@ -366,14 +372,14 @@ class OllamaClient(BaseLLMClient):
     ):
         super().__init__(model, temperature, timeout)
         self.base_url = base_url
-        self._native_tools_supported: Optional[bool] = None
+        self._native_tools_supported: bool | None = None
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
-        tools: Optional[List[Dict]] = None,
+        messages: list[dict[str, str]],
+        tools: list[dict] | None = None,
         max_tokens: int = 1024,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
 
         if tools and self._native_tools_supported is None:
             result = await self._try_native_tools(messages, tools, max_tokens)
@@ -392,7 +398,7 @@ class OllamaClient(BaseLLMClient):
         else:
             return await self._chat_plain(messages, max_tokens)
 
-    async def _try_native_tools(self, messages, tools, max_tokens) -> Optional[Dict]:
+    async def _try_native_tools(self, messages, tools, max_tokens) -> dict | None:
         payload = self._build_payload(messages, max_tokens, tools=tools)
         response = await _do_request(
             self.base_url, payload, self.timeout,
@@ -403,7 +409,7 @@ class OllamaClient(BaseLLMClient):
             return None
         return self._parse_ollama_response(response.json())
 
-    async def _chat_native(self, messages, tools, max_tokens) -> Dict:
+    async def _chat_native(self, messages, tools, max_tokens) -> dict:
         payload = self._build_payload(messages, max_tokens, tools=tools)
         response = await _do_request(
             self.base_url, payload, self.timeout,
@@ -411,7 +417,7 @@ class OllamaClient(BaseLLMClient):
         )
         return self._parse_ollama_response(response.json())
 
-    async def _chat_prompt_based(self, messages, tools, max_tokens) -> Dict:
+    async def _chat_prompt_based(self, messages, tools, max_tokens) -> dict:
         tool_prompt = self.build_tool_prompt(tools)
         augmented = self.inject_tool_prompt(messages, tool_prompt)
         payload = self._build_payload(augmented, max_tokens)
@@ -427,7 +433,7 @@ class OllamaClient(BaseLLMClient):
             tool_calls = [parsed]
         return {"content": content, "tool_calls": tool_calls, "raw": data}
 
-    async def _chat_plain(self, messages, max_tokens) -> Dict:
+    async def _chat_plain(self, messages, max_tokens) -> dict:
         payload = self._build_payload(messages, max_tokens)
         response = await _do_request(
             self.base_url, payload, self.timeout,
@@ -448,7 +454,7 @@ class OllamaClient(BaseLLMClient):
             payload["tools"] = tools
         return payload
 
-    def _parse_ollama_response(self, data: dict) -> Dict:
+    def _parse_ollama_response(self, data: dict) -> dict:
         message = data.get("message", {})
         content = message.get("content", "").strip()
         tool_calls = message.get("tool_calls", [])

@@ -1,0 +1,5 @@
+http://10.10.10.20/product.php?id=1 - - [04/Sep/2026:05:20:11 +0000] "GET /product.php?id=1 HTTP/1.1" 200 1543
+10.10.10.20 - - [04/Sep/2026:05:20:31 +0000] "GET /product.php?id=1' HTTP/1.1" 500 210
+10.10.10.20 - - [04/Sep/2026:05:20:33 +0000] "GET /product.php?id=1'%20UNION%20SELECT%20username,password%20FROM%20users-- HTTP/1.1" 200 4820
+185.220.101.34 - - [04/Sep/2026:05:20:35 +0000] "GET /product.php?id=1%20OR%201=1 HTTP/1.1" 200 15320
+185.220.101.34 - - [04/Sep/2026:05:20:37 +0000] "GET /admin.php HTTP/1.1" 200 980

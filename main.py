@@ -248,12 +248,18 @@ async def main():
                     )
             continue
 
+        elif cmd == "learnings":
+            from quarr.knowledge.learned import summary as _learn_summary
+            print(f"\n{_learn_summary()}")
+            continue
+
         elif cmd == "help":
             print("\nCommands:")
             print("  state      - Show current pentest state")
             print("  findings   - Show discovered findings")
             print("  scope      - Show engagement scope")
             print("  history    - Show tool execution history")
+            print("  learnings  - Show knowledge learned from past engagements")
             print("  report     - Executive summary in terminal")
             print("  executive  - Export executive summary (markdown)")
             print("  technical  - Export full technical report (markdown)")
@@ -335,15 +341,30 @@ async def main():
                         for step in plan.steps:
                             step.status = "running"
                             print(f"\n⚙️ Step {step.step}: {step.tool}({step.arguments})")
+                            failed_before = sum(
+                                1 for t in agent.state.tool_history if not t.success
+                            )
                             result = await agent.run(
                                 f"Execute: {step.tool} with {json.dumps(step.arguments)}",
                                 status_callback=print_status,
                             )
-                            step.status = "done"
+                            failed_after = sum(
+                                1 for t in agent.state.tool_history if not t.success
+                            )
+                            # A step is "failed" if a tool errored during it or
+                            # the agent returned an error/abort result — do not
+                            # mislabel a failed step as done in the audit trail.
+                            step_errored = (
+                                failed_after > failed_before
+                                or result.lstrip().startswith("⚠️")
+                            )
+                            step.status = "failed" if step_errored else "done"
                             print(f"{'─' * 40}")
-                            print(result[:500])
-                        plan.status = "completed"
-                        print("\n✅ Plan completed.")
+                            print(f"[{step.status.upper()}] " + result[:500])
+                        completed_ok = all(s.status == "done" for s in plan.steps)
+                        plan.status = "completed" if completed_ok else "failed"
+                        icon = "✅" if completed_ok else "⚠️"
+                        print(f"\n{icon} Plan {plan.status}.")
                     else:
                         print("Plan not executed.")
                 else:

@@ -1,0 +1,14 @@
+=== ANDROID MANIFEST ANALYSIS ===
+Package: com.vulnerable.bankapp
+minSdkVersion: 19
+targetSdkVersion: 28
+Dangerous permissions: READ_SMS, READ_CONTACTS, ACCESS_FINE_LOCATION
+Deeplink hosts: bankapp.example.com
+
+=== FINDINGS ===
+[CRITICAL] Application is debuggable (android:debuggable=true) in production build
+[HIGH] Exported activity com.vulnerable.bankapp.TransferActivity has no permission guard
+[HIGH] Backup allowed (android:allowBackup=true) - app data extractable via adb backup
+[MEDIUM] minSdkVersion 19 exposes app to known platform vulnerabilities
+[LOW] Custom deeplink scheme without host validation
+[INFO] Uses cleartext traffic flag not explicitly set

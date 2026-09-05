@@ -4,11 +4,9 @@ blue_team_tools.py - M19: Blue Team Defense & Monitoring
 Tools untuk deteksi serangan, hardening, dan incident response awal.
 """
 
-import subprocess
-import shlex
 import re
-import os
-from typing import Dict, Any
+import shlex
+import subprocess
 
 
 def _run(cmd: str, timeout: int = 30) -> str:

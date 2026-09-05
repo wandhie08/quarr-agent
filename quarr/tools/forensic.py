@@ -9,12 +9,10 @@ Tools untuk investigasi pasca-insiden:
 - Network forensics (PCAP)
 """
 
-import subprocess
-import shlex
-import re
 import os
+import shlex
+import subprocess
 from datetime import datetime
-from typing import Dict, Any
 
 
 def _run(cmd: str, timeout: int = 60) -> str:
@@ -53,7 +51,19 @@ def _validate_path(p: str) -> str:
     p = p.strip()
     if not p:
         raise ValueError("Path cannot be empty")
+    # Block path traversal so evidence tooling (often run under sudo) cannot be
+    # tricked into reading/writing outside the intended location.
+    if ".." in p.split("/"):
+        raise ValueError(f"Path traversal not allowed: {p}")
     return p
+
+
+def _which(binary: str) -> bool:
+    """True if `binary` is on PATH. Uses shutil.which so a missing tool is
+    correctly reported as absent (the old `which` string check treated the
+    "[No output]" of a missing binary as present, running the wrong tool)."""
+    import shutil
+    return shutil.which(binary) is not None
 
 
 # ============================================================
@@ -70,9 +80,12 @@ def disk_image(source: str, destination: str) -> str:
     destination = _validate_path(destination)
 
     # Prefer dcfldd (forensic version of dd with hashing)
-    dcfldd = _shell("which dcfldd", timeout=3).strip()
-    if dcfldd and "[ERROR]" not in dcfldd:
-        cmd = f"sudo dcfldd if={shlex.quote(source)} of={shlex.quote(destination)} hash=sha256 hashwindow=1G hashlog={destination}.hash"
+    if _which("dcfldd"):
+        hashlog = shlex.quote(destination + ".hash")
+        cmd = (
+            f"sudo dcfldd if={shlex.quote(source)} of={shlex.quote(destination)} "
+            f"hash=sha256 hashwindow=1G hashlog={hashlog}"
+        )
     else:
         cmd = f"sudo dd if={shlex.quote(source)} of={shlex.quote(destination)} bs=4M status=progress"
     return _run(cmd, timeout=3600)
@@ -84,8 +97,7 @@ def file_recovery(image_path: str, output_dir: str = "/tmp/recovered") -> str:
     output_dir = _validate_path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    foremost = _shell("which foremost", timeout=3).strip()
-    if foremost and "[ERROR]" not in foremost:
+    if _which("foremost"):
         cmd = f"foremost -i {shlex.quote(image_path)} -o {shlex.quote(output_dir)} -T"
     else:
         cmd = f"scalpel {shlex.quote(image_path)} -o {shlex.quote(output_dir)}"
@@ -101,15 +113,18 @@ def memory_dump(output_path: str = "/tmp/memory.raw") -> str:
     output_path = _validate_path(output_path)
 
     # Try avml (Azure VMLinux Memory Dump - fast)
-    avml = _shell("which avml", timeout=3).strip()
-    if avml and "[ERROR]" not in avml:
+    if _which("avml"):
         return _run(f"sudo avml {shlex.quote(output_path)}", timeout=120)
 
     # Fallback: /proc/kcore or LiME
     lime = _shell("find /lib/modules -name 'lime*.ko' 2>/dev/null | head -1", timeout=5).strip()
-    if lime and "[ERROR]" not in lime:
+    if lime and "[ERROR]" not in lime and "[No output]" not in lime:
+        # LiME takes its arguments as a single insmod parameter string; quote
+        # the whole "path=... format=raw" token so a crafted output_path cannot
+        # break out and inject extra insmod/shell arguments (runs under sudo).
+        lime_args = shlex.quote(f"path={output_path} format=raw")
         return _run(
-            f"sudo insmod {shlex.quote(lime)} 'path={output_path} format=raw'",
+            f"sudo insmod {shlex.quote(lime)} {lime_args}",
             timeout=120
         )
 

@@ -4,15 +4,13 @@ import json
 
 import pytest
 
-from quarr.core.reporter import render_html, export_html, export_pdf, export_json
-from quarr.core.models import Finding, FindingStatus, Severity
-from quarr.core.evidence import EvidenceCollector
+from quarr.core import dedup, persistence
 from quarr.core import timeline as tl
-from quarr.core import dedup
-from quarr.core import persistence
-from quarr.integrations.notifications import Notifier
+from quarr.core.evidence import EvidenceCollector
 from quarr.core.exceptions import QuarrError, ValidationError
-
+from quarr.core.models import Finding, FindingStatus, Severity
+from quarr.core.reporter import export_html, export_json, export_pdf, render_html
+from quarr.integrations.notifications import Notifier
 
 # ---- reporting ----
 
@@ -79,7 +77,8 @@ def test_evidence_index_includes_hash(tmp_path):
     ec = EvidenceCollector("ENG-1", base_dir=str(tmp_path))
     ec.collect("FIND-1", "nmap", "desc", content="x")
     idx = ec.save_index()
-    data = json.loads(open(idx).read())
+    with open(idx) as f:
+        data = json.loads(f.read())
     assert data[0]["sha256"]
     assert data[0]["custody"]
 

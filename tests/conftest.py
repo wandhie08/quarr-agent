@@ -5,8 +5,14 @@ from pathlib import Path
 import pytest
 
 from quarr.core.models import (
-    Engagement, PentestState, Host, Service, Observation, Finding,
-    FindingStatus, Severity,
+    Engagement,
+    Finding,
+    FindingStatus,
+    Host,
+    Observation,
+    PentestState,
+    Service,
+    Severity,
 )
 from quarr.tools.executor import ExecResult
 

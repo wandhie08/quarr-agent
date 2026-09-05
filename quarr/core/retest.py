@@ -7,14 +7,13 @@ Tracks retest history and status changes.
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
 
-from quarr.core.models import PentestState, Finding, FindingStatus, Observation
+from quarr.core.models import Finding, FindingStatus, PentestState
 
 logger = logging.getLogger("quarr.retest")
 
 
-def get_retestable_findings(state: PentestState) -> List[Finding]:
+def get_retestable_findings(state: PentestState) -> list[Finding]:
     """Get findings that can be retested (confirmed or reported)."""
     return [
         f for f in state.findings
@@ -22,7 +21,7 @@ def get_retestable_findings(state: PentestState) -> List[Finding]:
     ]
 
 
-def suggest_retest_tools(finding: Finding) -> List[Dict]:
+def suggest_retest_tools(finding: Finding) -> list[dict]:
     """Suggest which tools to use for retesting a finding."""
     title_lower = finding.title.lower()
 

@@ -2,8 +2,8 @@
 
 import pytest
 
-from quarr.core.rate_limiter import TokenBucket
 from quarr.core.exceptions import LLMRateLimitError
+from quarr.core.rate_limiter import TokenBucket
 
 
 class FakeClock:

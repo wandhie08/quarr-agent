@@ -9,13 +9,12 @@ Enhanced forensic + incident response tools:
 - Incident timeline builder
 """
 
-import subprocess
-import shlex
-import re
-import os
 import json
+import os
+import re
+import shlex
+import subprocess
 from datetime import datetime
-from typing import Dict, Any
 
 
 def _run(cmd: str, timeout: int = 60) -> str:
@@ -150,15 +149,10 @@ def evtx_analysis(evtx_file: str, event_ids: str = "") -> str:
         return f"[ERROR] File not found: {evtx_file}"
 
     # Try python-evtx
-    cmd = f"python3 -c \"import Evtx.Evtx as evtx; print('ok')\" 2>/dev/null"
+    cmd = "python3 -c \"import Evtx.Evtx as evtx; print('ok')\" 2>/dev/null"
     check = _shell(cmd, timeout=5)
 
     if "ok" in check:
-        filter_str = ""
-        if event_ids:
-            ids = [id.strip() for id in event_ids.split(",")]
-            filter_str = f"event_ids = {ids}"
-
         script = f"""
 import Evtx.Evtx as evtx
 import xml.etree.ElementTree as ET
@@ -280,19 +274,19 @@ def build_incident_timeline(hours: int = 48, output_file: str = "") -> str:
     events = []
 
     # Auth events
-    auth = _shell(f"grep -E 'session opened|session closed|Failed password|Accepted|sudo:' /var/log/auth.log 2>/dev/null | tail -100", timeout=10)
+    auth = _shell("grep -E 'session opened|session closed|Failed password|Accepted|sudo:' /var/log/auth.log 2>/dev/null | tail -100", timeout=10)
     for line in auth.split("\n"):
         if line.strip():
             events.append(("AUTH", line.strip()))
 
     # Syslog events
-    syslog = _shell(f"grep -E 'Started|Stopped|error|warning|critical' /var/log/syslog 2>/dev/null | tail -50", timeout=10)
+    syslog = _shell("grep -E 'Started|Stopped|error|warning|critical' /var/log/syslog 2>/dev/null | tail -50", timeout=10)
     for line in syslog.split("\n"):
         if line.strip():
             events.append(("SYSTEM", line.strip()))
 
     # Kernel
-    kern = _shell(f"grep -E 'error|panic|oops|segfault|oom' /var/log/kern.log 2>/dev/null | tail -20", timeout=5)
+    kern = _shell("grep -E 'error|panic|oops|segfault|oom' /var/log/kern.log 2>/dev/null | tail -20", timeout=5)
     for line in kern.split("\n"):
         if line.strip():
             events.append(("KERNEL", line.strip()))

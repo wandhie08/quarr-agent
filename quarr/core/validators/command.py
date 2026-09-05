@@ -9,8 +9,14 @@ import re
 
 from quarr.core.exceptions import ArgumentValidationError
 
-ARG_SAFE = re.compile(r"^[A-Za-z0-9._:/@=,\-\+%]+$")
-DANGEROUS = set(";|&$`><\n\r")
+# Arguments are executed with shell=False (argv vectors, never a shell string),
+# so characters that are only dangerous to a shell are harmless inside a single
+# argv element. We therefore ALLOW URL characters (? & # ~ [ ]) — required for
+# realistic targets like http://site/page?id=1&x=2 which SQLi/nuclei/web tools
+# need — while still blocking the genuinely dangerous shell metacharacters
+# (; | $ ` < > and newlines) as defense-in-depth.
+ARG_SAFE = re.compile(r"^[A-Za-z0-9._:/@=,\-\+%?&#~\[\]]+$")
+DANGEROUS = set(";|$`><\n\r")
 
 
 def validate_arg(arg: str) -> str:

@@ -12,18 +12,48 @@ Files:
 import hashlib as _hashlib
 import json
 import os
+import re
 import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from quarr.core.exceptions import ValidationError
 from quarr.core.models import PentestState
+from quarr.core.validators.path import safe_join
 
 ENGAGEMENTS_DIR = "engagements"
 
+# Engagement IDs and evidence filenames are used to build filesystem paths, so
+# they must be strictly validated to prevent traversal / arbitrary FS access.
+_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _validate_engagement_id(engagement_id: str) -> str:
+    if not engagement_id or not _ID_RE.match(engagement_id) or engagement_id in (".", ".."):
+        raise ValidationError(
+            "Invalid engagement id", context={"engagement_id": str(engagement_id)}
+        )
+    return engagement_id
+
+
+def _validate_filename(filename: str) -> str:
+    # Evidence filenames must be a single path component with no traversal.
+    if (
+        not filename
+        or "/" in filename
+        or "\\" in filename
+        or filename in (".", "..")
+        or "\x00" in filename
+    ):
+        raise ValidationError("Invalid evidence filename", context={"filename": str(filename)})
+    return filename
+
 
 def _get_engagement_dir(engagement_id: str) -> Path:
-    p = Path(ENGAGEMENTS_DIR) / engagement_id
+    _validate_engagement_id(engagement_id)
+    # safe_join resolves + asserts containment within ENGAGEMENTS_DIR.
+    p = Path(safe_join(ENGAGEMENTS_DIR, engagement_id))
     p.mkdir(parents=True, exist_ok=True)
     (p / "evidence").mkdir(exist_ok=True)
     return p
@@ -45,7 +75,9 @@ def save_state(state: PentestState) -> str:
 
 def load_state(engagement_id: str) -> PentestState | None:
     """Load state dari disk."""
-    filepath = Path(ENGAGEMENTS_DIR) / engagement_id / "state.json"
+    _validate_engagement_id(engagement_id)
+    eng_dir = Path(safe_join(ENGAGEMENTS_DIR, engagement_id))
+    filepath = eng_dir / "state.json"
     if not filepath.exists():
         return None
 
@@ -88,7 +120,8 @@ def list_engagements() -> list:
 
 def delete_engagement(engagement_id: str) -> bool:
     """Delete saved engagement."""
-    eng_dir = Path(ENGAGEMENTS_DIR) / engagement_id
+    _validate_engagement_id(engagement_id)
+    eng_dir = Path(safe_join(ENGAGEMENTS_DIR, engagement_id))
     if eng_dir.exists():
         shutil.rmtree(eng_dir)
         return True
@@ -97,8 +130,10 @@ def delete_engagement(engagement_id: str) -> bool:
 
 def save_evidence(engagement_id: str, filename: str, content: str) -> str:
     """Save evidence file."""
+    _validate_filename(filename)
     eng_dir = _get_engagement_dir(engagement_id)
-    filepath = eng_dir / "evidence" / filename
+    # Contain the final path within the engagement's evidence directory.
+    filepath = Path(safe_join(str(eng_dir / "evidence"), filename))
     with open(filepath, "w") as f:
         f.write(content)
     return str(filepath)

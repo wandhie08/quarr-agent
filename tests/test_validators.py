@@ -2,14 +2,15 @@
 
 import pytest
 
-from quarr.core.validators import target as tv
-from quarr.core.validators import command as cv
-from quarr.core.validators import path as pv
-from quarr.core.validators import file as fv
 from quarr.core.exceptions import (
-    TargetValidationError, ArgumentValidationError, ValidationError,
+    ArgumentValidationError,
+    TargetValidationError,
+    ValidationError,
 )
-
+from quarr.core.validators import command as cv
+from quarr.core.validators import file as fv
+from quarr.core.validators import path as pv
+from quarr.core.validators import target as tv
 
 # ---- target ----
 
@@ -41,11 +42,23 @@ def test_target_rejects_loopback_when_disallowed():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("bad", [
-    "; rm -rf /", "a|b", "$(whoami)", "`id`", "a>b", "a&b", "new\nline",
+    "; rm -rf /", "a|b", "$(whoami)", "`id`", "a>b", "new\nline",
 ])
 def test_command_rejects_injection(bad):
     with pytest.raises(ArgumentValidationError):
         cv.validate_arg(bad)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("url", [
+    "http://site.com/page?id=1",
+    "http://site.com/page?id=1&cat=2",
+    "https://a.b/path#frag",
+])
+def test_command_accepts_parameterized_urls(url):
+    # URL query/fragment chars are safe under shell=False and are REQUIRED by
+    # SQLi/nuclei/web tools against realistic targets.
+    assert cv.validate_arg(url) == url
 
 
 @pytest.mark.unit

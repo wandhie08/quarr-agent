@@ -64,7 +64,8 @@ def test_secrets_redacted_in_arguments(tmp_path):
         target="10.0.0.1",
         arguments={"password": "hunter2", "api_key": "sk-secret", "service": "ssh"},
     )
-    raw = open(path).read()
+    with open(path) as f:
+        raw = f.read()
     assert "hunter2" not in raw
     assert "sk-secret" not in raw
     assert "ssh" in raw

@@ -10,6 +10,7 @@
 6. [Scenario: Proactive Threat Hunting](#6-scenario-proactive-threat-hunting)
 7. [Scenario: Post-Incident Forensic](#7-scenario-post-incident-forensic)
 8. [Knowledge Base](#8-knowledge-base)
+9. [Testing the Blue Team Scenarios](#9-testing-the-blue-team-scenarios)
 
 ---
 
@@ -446,3 +447,73 @@ Eradication → Recovery → Lessons Learned
 - Maintain chain of custody
 - Order of volatility: RAM → disk cache → disk → logs → backups
 - Document every action
+
+---
+
+## 9. Testing the Blue Team Scenarios
+
+QUARR ships with automated tests that verify the blue-team detection logic and,
+optionally, run the real tools against a host you control. There are three tiers.
+
+### Tier 1 — Scenario tests (mocked, run by default)
+
+`tests/test_blue_team_scenarios.py` exercises full incident-response scenarios
+end-to-end with the subprocess layer mocked, so nothing touches the real system.
+Detection/parsing is verified deterministically (a captured `auth.log` fixture
+is used for the brute-force case).
+
+```bash
+python3 -m pytest tests/test_blue_team_scenarios.py -v
+```
+
+**Scenario A — SSH brute-force response (T1110 / T1078)**
+
+| Step | Tool | Assertion |
+|------|------|-----------|
+| Detect | `log_analysis(auth, filter="Failed")` | attacker IP repeats ≥ 5× |
+| Correlate | `active_connections(established)` | attacker session on :22 |
+| Contain | `firewall_block(<IP>)` | `✅ Blocked`; **rejects** injection/hostnames |
+| Recover | `firewall_unblock(<IP>)` | `✅ Unblocked` |
+
+**Scenario B — Malware / C2 / persistence (T1059 / T1071 / T1053 / T1070)**
+
+| Step | Tool | Assertion |
+|------|------|-----------|
+| Processes | `process_monitor()` | flags `nc -e`, `xmrig`; clean host = no flag |
+| C2 beacon | `active_connections(suspicious)` | flags port 4444 |
+| Backdoor | `port_audit()` | flags listening :4444 |
+| Persistence | `cron_audit()` | surfaces malicious cron |
+| Integrity | `file_integrity_check(/usr/bin, 7)` | reports modified binary; rejects path traversal |
+
+There is also an **end-to-end agent test** that drives the brute-force playbook
+through the real agent loop (LLM scripted, tool handlers patched), confirming the
+policy allows LOW/MEDIUM blue tools for the `operator` role and that both tool
+executions are recorded in state.
+
+### Tier 2 — Live read-only (opt-in)
+
+`tests/test_live_blue_team.py` runs the **actual** commands (`ss`, `ps`,
+`systemctl`, `who`, `find`, ...) against the local host and asserts each tool
+produces well-formed output without crashing. These are marked `@pytest.mark.live`
+and skipped by default.
+
+```bash
+export QUARR_LIVE_BLUE=1
+python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+### Tier 3 — Live state-changing (double opt-in, needs root)
+
+The `firewall_block` / `firewall_unblock` tests modify `iptables`, so they are
+gated behind a **second** opt-in. They operate on an RFC 5737 TEST-NET IP
+(`203.0.113.42`, non-routable) and always clean up the rule afterward.
+
+```bash
+export QUARR_LIVE_BLUE=1
+export QUARR_LIVE_BLUE_MUTATE=1   # only if you accept iptables changes
+sudo -E python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+> ⚠️ **Authorization:** Only run live harnesses against systems you own or are
+> explicitly authorized to test. A per-test timeout keeps a stalled command from
+> hanging the suite.

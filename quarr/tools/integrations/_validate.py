@@ -9,7 +9,10 @@ import re
 
 from quarr.core.exceptions import ArgumentValidationError, TargetValidationError
 
-_TARGET_RE = re.compile(r"^[A-Za-z0-9._\-/]+$")
+# Targets may be a hostname/IP/CIDR, optionally with a ":port" suffix.
+# ":" is intentionally allowed (tools like nikto/sslscan accept host:port) but
+# it is NOT a shell metacharacter, and the executor still runs with shell=False.
+_TARGET_RE = re.compile(r"^[A-Za-z0-9._\-/:]+$")
 
 
 def validate_target(target: str) -> str:

@@ -8,13 +8,37 @@ from quarr.api.websocket import ConnectionManager
 
 
 @pytest.mark.integration
-def test_ws_connect_receive_broadcast():
+def test_ws_requires_auth_and_connects_with_token():
+    from quarr.api import security as sec
+    from quarr.api.auth import UserStore
+    from quarr.core.config import Settings
+
+    store = UserStore()
+    store.add("op", "oppw", role="operator")
+    sec.init_security(Settings(_env_file=None, jwt_secret="x" * 40), store)
+    token = sec.token_service().access_token("op", "operator")
+
     client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        # The endpoint sends an initial event on connect.
+    with client.websocket_connect(f"/ws?token={token}") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "connected"
         assert msg["data"] == "ok"
+
+
+@pytest.mark.integration
+def test_ws_rejects_unauthenticated():
+    from starlette.websockets import WebSocketDisconnect
+
+    from quarr.api import security as sec
+    from quarr.api.auth import UserStore
+    from quarr.core.config import Settings
+
+    sec.init_security(Settings(_env_file=None, jwt_secret="x" * 40), UserStore())
+    client = TestClient(app)
+    # No token → the endpoint closes before sending 'connected'.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_json()
 
 
 @pytest.mark.unit

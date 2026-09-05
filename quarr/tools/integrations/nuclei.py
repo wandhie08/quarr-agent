@@ -16,9 +16,14 @@ class NucleiIntegration(ToolIntegration):
     default_timeout = 600
     requires_scope = True
 
-    def build_command(self, *, target: str, **kwargs) -> list[str]:
+    def build_command(
+        self, *, target: str, extra_args: list[str] | None = None, **kwargs
+    ) -> list[str]:
         url = validate_url(target)
-        return ["nuclei", "-u", url, "-jsonl", "-silent"]
+        cmd = ["nuclei", "-u", url, "-jsonl", "-silent"]
+        if extra_args:
+            cmd.extend(extra_args)
+        return cmd
 
     def parse_output(self, raw: str) -> dict[str, Any]:
         return parse_nuclei_jsonl(raw)

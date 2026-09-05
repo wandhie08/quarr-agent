@@ -13,7 +13,7 @@ build/
 venv/
 env/
 
-# IDE
+# IDE / editors
 .vscode/
 .idea/
 *.swp
@@ -30,7 +30,23 @@ audit.log
 engagements/
 *.bak
 
-# Test artifacts
+# Test & lint artifacts
 .pytest_cache/
+.ruff_cache/
 htmlcov/
 .coverage
+coverage.xml
+
+# Security tool caches / runtime config (nuclei, uncover, etc.)
+.nuclei-cache/
+.nuclei-config/
+.uncover-config/
+nuclei/
+
+# Internal dev planning / specs (not part of the shipped app)
+.kiro/
+
+# Session/scratch artifacts
+lab-test-report-*.md
+PENTEST_LAB_NOTES.md
+TASKS.md

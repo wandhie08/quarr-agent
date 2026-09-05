@@ -4,11 +4,10 @@ threat_hunting_tools.py - M20: Threat Hunting & Detection
 Proaktif mencari indikator kompromi (IOC), rootkit, anomaly.
 """
 
-import subprocess
-import shlex
-import re
 import os
-from typing import Dict, Any
+import re
+import shlex
+import subprocess
 
 
 def _run(cmd: str, timeout: int = 30) -> str:
@@ -74,14 +73,20 @@ def ioc_search(ioc_type: str, value: str) -> str:
         results.append(_shell(f"grep {shlex.quote(value)} /etc/hosts 2>/dev/null", timeout=3))
 
     elif ioc_type == "hash":
-        # Search for file with matching hash
-        results.append(f"=== SEARCHING FILES WITH HASH: {value[:16]}... ===")
-        if len(value) == 32:  # MD5
-            alg = "md5sum"
-        elif len(value) == 64:  # SHA256
-            alg = "sha256sum"
-        else:
-            alg = "sha1sum"
+        # Search for file with matching hash. Normalize + validate first so a
+        # malformed hash (wrong length, whitespace, non-hex) is rejected loudly
+        # instead of being hashed with the wrong algorithm — which would grep
+        # for a value that can never match and silently report "nothing found"
+        # on a known-bad IOC.
+        value = value.strip().lower()
+        alg_by_len = {32: "md5sum", 40: "sha1sum", 64: "sha256sum"}
+        if not re.fullmatch(r"[0-9a-f]+", value) or len(value) not in alg_by_len:
+            return (
+                f"[ERROR] Invalid hash '{value[:16]}...': expected 32 (MD5), "
+                f"40 (SHA1), or 64 (SHA256) hex characters."
+            )
+        alg = alg_by_len[len(value)]
+        results.append(f"=== SEARCHING FILES WITH HASH: {value[:16]}... ({alg}) ===")
         results.append(_shell(
             f"find /tmp /var/tmp /dev/shm /home -type f -exec {alg} {{}} \\; 2>/dev/null | grep {shlex.quote(value)} | head -10",
             timeout=30
@@ -92,7 +97,7 @@ def ioc_search(ioc_type: str, value: str) -> str:
         results.append(_shell(f"find / -name {shlex.quote(value)} -type f 2>/dev/null | head -20", timeout=15))
 
     elif ioc_type == "string":
-        results.append(f"=== SEARCHING STRING IN /tmp, /var/tmp, /dev/shm ===")
+        results.append("=== SEARCHING STRING IN /tmp, /var/tmp, /dev/shm ===")
         results.append(_shell(
             f"grep -rl {shlex.quote(value)} /tmp/ /var/tmp/ /dev/shm/ 2>/dev/null | head -20",
             timeout=10
@@ -123,7 +128,7 @@ def suspicious_files(directory: str = "/tmp", days: int = 3) -> str:
     results.append(_shell(f"find {shlex.quote(directory)} -type f -executable -ls 2>/dev/null | head -20", timeout=10))
 
     # World-writable
-    results.append(f"\n=== WORLD-WRITABLE FILES ===")
+    results.append("\n=== WORLD-WRITABLE FILES ===")
     results.append(_shell(f"find {shlex.quote(directory)} -type f -perm -o+w -ls 2>/dev/null | head -20", timeout=10))
 
     return "\n".join(results)

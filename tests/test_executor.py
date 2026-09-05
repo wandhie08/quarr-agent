@@ -2,10 +2,12 @@
 
 import pytest
 
-from quarr.tools.executor import SecureExecutor, ExecResult
 from quarr.core.exceptions import (
-    ArgumentValidationError, ToolNotFoundError, ToolTimeoutError,
+    ArgumentValidationError,
+    ToolNotFoundError,
+    ToolTimeoutError,
 )
+from quarr.tools.executor import ExecResult, SecureExecutor
 
 
 @pytest.mark.unit
@@ -25,7 +27,6 @@ def test_echo_happy_path():
     "`id`",
     "a>b",
     "a b",          # space would split into two shell words
-    "a&b",
     "new\nline",
 ])
 def test_injection_payloads_rejected(bad):

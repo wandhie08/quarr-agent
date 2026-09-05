@@ -12,10 +12,9 @@ Flow:
 
 import json
 import logging
-from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
-from quarr.tools.registry import TOOL_REGISTRY, get_tools_summary
+from quarr.tools.registry import TOOL_REGISTRY
 
 logger = logging.getLogger("quarr.planner")
 
@@ -25,20 +24,20 @@ class PlanStep:
     step: int
     tool: str
     description: str
-    arguments: Dict = field(default_factory=dict)
+    arguments: dict = field(default_factory=dict)
     status: str = "pending"  # pending, running, done, skipped, failed
 
 
 @dataclass
 class AttackPlan:
     objective: str
-    steps: List[PlanStep] = field(default_factory=list)
+    steps: list[PlanStep] = field(default_factory=list)
     current_step: int = 0
     status: str = "draft"  # draft, approved, running, completed
 
     def summary(self) -> str:
         lines = [
-            f"📋 ATTACK PLAN",
+            "📋 ATTACK PLAN",
             f"Objective: {self.objective}",
             f"Status: {self.status}",
             f"Steps: {len(self.steps)}",
@@ -49,12 +48,13 @@ class AttackPlan:
                 "pending": "⬜", "running": "🔄",
                 "done": "✅", "skipped": "⏭️", "failed": "❌"
             }.get(s.status, "⬜")
-            args_str = ", ".join(f"{k}={v}" for k, v in s.arguments.items())
+            args = s.arguments if isinstance(s.arguments, dict) else {}
+            args_str = ", ".join(f"{k}={v}" for k, v in args.items())
             lines.append(f"  {icon} {s.step}. {s.tool}({args_str})")
             lines.append(f"     {s.description}")
         return "\n".join(lines)
 
-    def next_step(self) -> Optional[PlanStep]:
+    def next_step(self) -> PlanStep | None:
         for s in self.steps:
             if s.status == "pending":
                 return s
@@ -82,7 +82,7 @@ async def generate_plan(
     objective: str,
     state_summary: str,
     tools_summary: str,
-) -> Optional[AttackPlan]:
+) -> AttackPlan | None:
     """Ask LLM to generate an attack plan."""
 
     messages = [
@@ -93,13 +93,25 @@ async def generate_plan(
 
     try:
         response = await llm_client.chat(messages=messages, max_tokens=1024)
-        content = response["content"].strip()
+        # content may be None (model returned only tool_calls or an empty body)
+        # or the key may be missing — coerce to a safe string.
+        content = (response.get("content") or "").strip()
+        if not content:
+            logger.error("plan_generation_empty_content")
+            return None
+
+        # Strip a markdown code fence if the model wrapped the JSON.
+        if content.startswith("```"):
+            import re as _re
+            fence = _re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, _re.DOTALL)
+            if fence:
+                content = fence.group(1).strip()
 
         # Parse JSON
         if content.startswith("["):
             steps_data = json.loads(content)
         else:
-            # Extract JSON from text
+            # Extract the first JSON array from surrounding prose.
             import re
             match = re.search(r'\[.*\]', content, re.DOTALL)
             if match:
@@ -108,21 +120,45 @@ async def generate_plan(
                 logger.error(f"Cannot parse plan: {content[:200]}")
                 return None
 
-        plan = AttackPlan(objective=objective)
-        for i, step in enumerate(steps_data, 1):
-            tool_name = step.get("tool", "")
-            if tool_name in TOOL_REGISTRY:
-                plan.steps.append(PlanStep(
-                    step=i,
-                    tool=tool_name,
-                    description=step.get("description", ""),
-                    arguments=step.get("args", {}),
-                ))
+        # Some models wrap the array as {"steps": [...]} / {"plan": [...]}.
+        if isinstance(steps_data, dict):
+            steps_data = steps_data.get("steps") or steps_data.get("plan") or []
+        if not isinstance(steps_data, list):
+            logger.error("plan_steps_not_a_list", extra={"type": type(steps_data).__name__})
+            return None
 
+        plan = AttackPlan(objective=objective)
+        dropped = 0
+        for i, step in enumerate(steps_data, 1):
+            # Skip malformed step entries individually rather than discarding
+            # the whole plan.
+            if not isinstance(step, dict):
+                dropped += 1
+                continue
+            tool_name = step.get("tool", "")
+            if tool_name not in TOOL_REGISTRY:
+                logger.warning("plan_dropping_unknown_tool", extra={"tool": tool_name})
+                dropped += 1
+                continue
+            # args must be a dict; coerce anything else so summary()/json.dumps
+            # downstream cannot crash on None/list/str.
+            args = step.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
+            plan.steps.append(PlanStep(
+                step=i,
+                tool=tool_name,
+                description=step.get("description", ""),
+                arguments=args,
+            ))
+
+        if dropped:
+            logger.info("plan_steps_dropped", extra={"dropped": dropped,
+                                                     "kept": len(plan.steps)})
         if plan.steps:
             return plan
         return None
 
-    except Exception as e:
-        logger.error(f"Plan generation failed: {e}")
+    except (KeyError, TypeError, AttributeError, ValueError, json.JSONDecodeError) as e:
+        logger.error(f"Plan generation failed: {type(e).__name__}: {e}")
         return None

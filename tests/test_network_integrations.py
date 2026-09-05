@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from quarr.tools.integrations.nmap import NmapIntegration
-from quarr.tools.integrations.nikto import NiktoIntegration
-from quarr.tools.integrations.masscan import MasscanIntegration
-from quarr.tools.integrations.nuclei import NucleiIntegration
-from quarr.tools.executor import ExecResult
 from quarr.core.exceptions import TargetValidationError
+from quarr.tools.executor import ExecResult
+from quarr.tools.integrations.masscan import MasscanIntegration
+from quarr.tools.integrations.nikto import NiktoIntegration
+from quarr.tools.integrations.nmap import NmapIntegration
+from quarr.tools.integrations.nuclei import NucleiIntegration
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

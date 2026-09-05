@@ -33,6 +33,8 @@ def parse_nikto(raw: str) -> dict[str, Any]:
 
     findings = []
     for v in vulns:
+        if not isinstance(v, dict):
+            continue  # skip malformed entries instead of crashing
         findings.append(
             {
                 "id": v.get("id"),

@@ -55,13 +55,46 @@ def redact(text: str) -> str:
     if not text:
         return text
     result = text
-    # Key-value patterns: keep the key, mask the value.
-    result = re.sub(r"(?i)((?:password|passwd|pwd)\s*[:=]\s*)(\S+)", rf"\1{_REDACTED}", result)
-    result = re.sub(r"(?i)(api[_-]?key\s*[:=]\s*)(\S+)", rf"\1{_REDACTED}", result)
+
+    # Key-value patterns: keep the key, mask the value. Covers every sensitive
+    # key declared in REDACTION_KEYS (secret, token, credential(s), authorization,
+    # api_key, password, aws_secret_access_key, ...) so the free-text scrubber
+    # stays in sync with the declared key list.
+    kv_keys = (
+        r"password|passwd|pwd|secret[_-]?key|secret|access[_-]?token|auth[_-]?token|"
+        r"token|credentials?|authorization|api[_-]?key|apikey|"
+        r"aws_secret_access_key|client[_-]?secret"
+    )
+    result = re.sub(
+        rf"(?i)((?:{kv_keys})\s*[:=]\s*)(\S+)", rf"\1{_REDACTED}", result
+    )
+    # Authorization header carries "<scheme> <token>" (two tokens); mask the
+    # whole value to end-of-line so the credential part isn't left exposed.
+    result = re.sub(
+        r"(?i)(authorization\s*[:=]\s*)\S.*", rf"\1{_REDACTED}", result
+    )
     result = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}", rf"\1{_REDACTED}", result)
-    # Standalone tokens.
+
+    # Basic-auth credentials embedded in URLs: scheme://user:pass@host
+    result = re.sub(
+        r"(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@",
+        rf"\1{_REDACTED}@",
+        result,
+    )
+
+    # Standalone high-signal tokens.
     result = PATTERNS["aws_key"].sub(_REDACTED, result)
     result = PATTERNS["openai"].sub(_REDACTED, result)
+    # GitHub personal/OAuth/app tokens.
+    result = re.sub(r"gh[pousr]_[A-Za-z0-9]{20,}", _REDACTED, result)
+    # Slack tokens.
+    result = re.sub(r"xox[baprs]-[A-Za-z0-9\-]{10,}", _REDACTED, result)
+    # JWT (header.payload.signature).
+    result = re.sub(
+        r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}",
+        _REDACTED,
+        result,
+    )
     result = re.sub(
         r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?"
         r"-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",

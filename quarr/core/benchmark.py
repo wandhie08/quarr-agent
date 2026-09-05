@@ -6,13 +6,12 @@ Measure: tool selection, finding recall, false positives, efficiency.
 """
 
 import json
-import time
 import logging
-from datetime import datetime
-from typing import List, Dict, Optional
+import os
 from dataclasses import dataclass, field
+from datetime import datetime
 
-from quarr.core.models import PentestState, FindingStatus
+from quarr.core.models import PentestState
 
 logger = logging.getLogger("quarr.benchmark")
 
@@ -22,15 +21,15 @@ class ExpectedFinding:
     title: str
     severity: str
     asset: str
-    keywords: List[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
 
 
 @dataclass
 class BenchmarkTarget:
     name: str
-    targets: List[str]
-    expected_findings: List[ExpectedFinding] = field(default_factory=list)
-    expected_services: List[str] = field(default_factory=list)
+    targets: list[str]
+    expected_findings: list[ExpectedFinding] = field(default_factory=list)
+    expected_services: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -58,23 +57,23 @@ class BenchmarkResult:
     tool_success_rate: float = 0.0       # successful / total
 
     # Details
-    matched: List[str] = field(default_factory=list)
-    missed: List[str] = field(default_factory=list)
-    extra: List[str] = field(default_factory=list)
+    matched: list[str] = field(default_factory=list)
+    missed: list[str] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [
             f"📊 BENCHMARK: {self.target_name}",
             f"Duration: {self.duration_seconds:.1f}s",
-            f"",
+            "",
             f"Tool Calls: {self.total_tool_calls} ({self.successful_tool_calls} OK, {self.failed_tool_calls} failed)",
             f"Tool Success Rate: {self.tool_success_rate:.0%}",
-            f"",
+            "",
             f"Expected Findings: {self.expected_findings}",
             f"Found: {self.found_findings}",
             f"Missed: {self.missed_findings}",
             f"False Positives: {self.false_positives}",
-            f"",
+            "",
             f"Finding Recall: {self.finding_recall:.0%}",
             f"False Positive Rate: {self.false_positive_rate:.0%}",
             f"Efficiency: {self.tool_efficiency:.2f} findings/tool",
@@ -86,6 +85,19 @@ class BenchmarkResult:
         if self.extra:
             lines.append(f"⚠️ Extra: {', '.join(self.extra)}")
         return "\n".join(lines)
+
+
+def _finding_matches_expected(af, exp: "ExpectedFinding") -> bool:
+    """True if agent finding `af` corresponds to expected finding `exp`.
+
+    Matches on any expected keyword against the agent finding's title or
+    description. When an expected finding declares no keywords, fall back to
+    its title so a correctly-discovered issue is not mis-scored as missed and
+    the corresponding agent finding is not mis-counted as a false positive.
+    """
+    haystack = f"{af.title} {af.description or ''}".lower()
+    terms = [k.lower() for k in exp.keywords] or [exp.title.lower()]
+    return any(term in haystack for term in terms if term)
 
 
 def evaluate(state: PentestState, benchmark: BenchmarkTarget, duration: float) -> BenchmarkResult:
@@ -108,34 +120,19 @@ def evaluate(state: PentestState, benchmark: BenchmarkTarget, duration: float) -
 
     # Finding matching
     agent_findings = state.findings
-    matched_expected = set()
 
     for exp in benchmark.expected_findings:
-        found = False
-        for af in agent_findings:
-            title_match = any(
-                kw.lower() in af.title.lower() or kw.lower() in (af.description or "").lower()
-                for kw in exp.keywords
-            )
-            if title_match:
-                found = True
-                matched_expected.add(exp.title)
-                result.matched.append(exp.title)
-                break
-        if not found:
+        if any(_finding_matches_expected(af, exp) for af in agent_findings):
+            result.matched.append(exp.title)
+        else:
             result.missed.append(exp.title)
 
     result.found_findings = len(result.matched)
     result.missed_findings = len(result.missed)
 
-    # False positives = agent findings not in expected
+    # False positives = agent findings not matching ANY expected finding.
     for af in agent_findings:
-        is_expected = any(
-            any(kw.lower() in af.title.lower() or kw.lower() in (af.description or "").lower()
-                for kw in exp.keywords)
-            for exp in benchmark.expected_findings
-        )
-        if not is_expected:
+        if not any(_finding_matches_expected(af, exp) for exp in benchmark.expected_findings):
             result.extra.append(af.title)
     result.false_positives = len(result.extra)
 
@@ -217,5 +214,3 @@ def save_benchmark_result(result: BenchmarkResult, filepath: str = "benchmark_re
     with open(filepath, "w") as f:
         json.dump(results, f, indent=2)
 
-
-import os

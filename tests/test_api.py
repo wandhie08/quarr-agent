@@ -3,10 +3,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from quarr.api.app import app, set_agent_factory
 from quarr.api import security as sec
-from quarr.core.config import Settings
+from quarr.api.app import app, set_agent_factory
 from quarr.core import persistence
+from quarr.core.config import Settings
 
 
 @pytest.fixture

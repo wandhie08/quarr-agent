@@ -3,13 +3,12 @@ mobile_parsers.py - M8: Parsers for Mobile Tool Output
 """
 
 import re
-import json
-from typing import Dict, Any, List
+from typing import Any
 
 
 class APKDecompileParser:
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         apktool_match = re.search(r'\[apktool\] Decoded to (\S+) \((\d+) files\)', raw_output)
         jadx_match = re.search(r'\[jadx\] Decompiled to (\S+) \((\d+) files\)', raw_output)
 
@@ -33,7 +32,7 @@ class APKDecompileParser:
 
 class SecretsParser:
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         secrets = []
         api_endpoints = []
 
@@ -80,7 +79,7 @@ class SecretsParser:
 
 class ManifestParser:
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         findings = []
         app_info = {}
 
@@ -130,7 +129,7 @@ class ManifestParser:
 
 class StorageParser:
     @staticmethod
-    def parse(raw_output: str) -> Dict[str, Any]:
+    def parse(raw_output: str) -> dict[str, Any]:
         sensitive_data = []
         databases = []
         external_files = []
@@ -165,7 +164,7 @@ class StorageParser:
         }
 
 
-def parse_mobile_output(tool_name: str, raw_output: str) -> Dict[str, Any]:
+def parse_mobile_output(tool_name: str, raw_output: str) -> dict[str, Any]:
     """Router for mobile tool parsers."""
     parser_map = {
         "apk_decompile": APKDecompileParser.parse,

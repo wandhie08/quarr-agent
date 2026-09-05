@@ -3,12 +3,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from quarr.api.app import app
 from quarr.api import security as sec
-from quarr.api.live import set_live_agent_factory
-from quarr.core.config import Settings
+from quarr.api.app import app
 from quarr.api.auth import UserStore
+from quarr.api.live import set_live_agent_factory
 from quarr.core import persistence
+from quarr.core.config import Settings
 from quarr.core.models import RiskLevel
 
 

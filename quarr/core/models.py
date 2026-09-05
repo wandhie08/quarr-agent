@@ -5,12 +5,12 @@ Persistent world model untuk agent. Semua data yang agent ketahui
 disimpan di sini sebagai structured state, bukan sebagai teks bebas.
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from enum import Enum
-from datetime import datetime
 import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any
 
+from pydantic import BaseModel, Field
 
 # === Enums ===
 
@@ -45,19 +45,19 @@ class Service(BaseModel):
     host: str
     port: int
     protocol: str = "tcp"
-    name: Optional[str] = None
-    version: Optional[str] = None
-    product: Optional[str] = None
-    extra_info: Optional[str] = None
+    name: str | None = None
+    version: str | None = None
+    product: str | None = None
+    extra_info: str | None = None
     state: str = "open"
 
 
 class Host(BaseModel):
     address: str
-    hostname: Optional[str] = None
-    os: Optional[str] = None
+    hostname: str | None = None
+    os: str | None = None
     state: str = "up"
-    services: List[Service] = []
+    services: list[Service] = []
     discovered_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -65,7 +65,7 @@ class Observation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     source_tool: str
     description: str
-    raw_evidence: Optional[str] = None
+    raw_evidence: str | None = None
     confidence: float = 0.5
     timestamp: datetime = Field(default_factory=datetime.now)
 
@@ -77,22 +77,22 @@ class Finding(BaseModel):
     confidence: float = 0.5
     status: FindingStatus = FindingStatus.OBSERVATION
     asset: str
-    description: Optional[str] = None
-    evidence: List[str] = []
-    impact: Optional[str] = None
-    remediation: Optional[str] = None
-    references: List[str] = []
-    observation_ids: List[str] = []
+    description: str | None = None
+    evidence: list[str] = []
+    impact: str | None = None
+    remediation: str | None = None
+    references: list[str] = []
+    observation_ids: list[str] = []
 
 
 class ToolExecution(BaseModel):
     tool_name: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
     result_summary: str
     raw_output_length: int = 0
     success: bool = True
-    duration_ms: Optional[int] = None
-    error: Optional[str] = None
+    duration_ms: int | None = None
+    error: str | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
@@ -101,9 +101,9 @@ class ToolExecution(BaseModel):
 class Engagement(BaseModel):
     id: str = Field(default_factory=lambda: f"ENG-{str(uuid.uuid4())[:8]}")
     name: str = "Unnamed Assessment"
-    allowed_targets: List[str] = []
-    excluded_targets: List[str] = []
-    allowed_operations: List[str] = [
+    allowed_targets: list[str] = []
+    excluded_targets: list[str] = []
+    allowed_operations: list[str] = [
         "network_discovery",
         "service_enumeration",
         "target_scope_check",
@@ -115,18 +115,18 @@ class Engagement(BaseModel):
 
 class PentestState(BaseModel):
     engagement: Engagement = Field(default_factory=Engagement)
-    hosts: List[Host] = []
-    observations: List[Observation] = []
-    findings: List[Finding] = []
-    tool_history: List[ToolExecution] = []
-    completed_tests: List[str] = []
-    pending_tests: List[str] = []
+    hosts: list[Host] = []
+    observations: list[Observation] = []
+    findings: list[Finding] = []
+    tool_history: list[ToolExecution] = []
+    completed_tests: list[str] = []
+    pending_tests: list[str] = []
     current_objective: str = "Awaiting engagement scope definition"
-    notes: List[str] = []
+    notes: list[str] = []
 
     def add_host(self, host: Host) -> None:
         """Tambah host, update jika sudah ada."""
-        for i, existing in enumerate(self.hosts):
+        for existing in self.hosts:
             if existing.address == host.address:
                 # Merge services
                 existing_ports = {
@@ -155,7 +155,7 @@ class PentestState(BaseModel):
         if tool_key not in self.completed_tests:
             self.completed_tests.append(tool_key)
 
-    def get_host(self, address: str) -> Optional[Host]:
+    def get_host(self, address: str) -> Host | None:
         for h in self.hosts:
             if h.address == address:
                 return h

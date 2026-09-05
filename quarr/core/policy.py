@@ -29,17 +29,29 @@ class PolicyEngine:
 
     @staticmethod
     def normalize_target(target: str) -> str:
-        """Bersihkan target string — extract hostname/IP saja."""
+        """Bersihkan target string — extract hostname/IP saja.
+
+        Hostname dinormalisasi menjadi lowercase karena DNS bersifat
+        case-insensitive. Tanpa ini, exclusion/scope bisa di-bypass hanya
+        dengan mengubah kapitalisasi (mis. PROD.LAB.LOCAL vs prod.lab.local).
+        """
         target = target.strip()
-        target = re.sub(r"^https?://", "", target)
+        target = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://", "", target)
         target = target.rstrip("/")
         # Remove path, query, fragment — ambil hostname/IP saja
         target = target.split("/")[0]
         target = target.split("?")[0]
         target = target.split("#")[0]
+        # Strip URL userinfo (user:pass@host) — ambil host setelah '@' terakhir
+        # supaya "http://in-scope@evil.com" tidak menyamar sebagai in-scope.
+        if "@" in target:
+            target = target.rsplit("@", 1)[1]
         # Remove port
         target = target.split(":")[0]
-        return target
+        # DNS is case-insensitive → canonicalize to lowercase. IP addresses are
+        # unaffected (digits/dots). This closes the case-based scope/exclusion
+        # bypass.
+        return target.lower()
 
     @staticmethod
     def target_matches_scope(target: str, scope_entry: str) -> bool:
@@ -53,7 +65,10 @@ class PolicyEngine:
         - Wildcard domain: *.lab.local
         """
         target = PolicyEngine.normalize_target(target)
-        scope_entry = scope_entry.strip()
+        # Hostnames/wildcards are case-insensitive; IP/CIDR are digits so
+        # lowercasing is a no-op for them. Keeps comparison symmetric with the
+        # normalized (lowercased) target.
+        scope_entry = scope_entry.strip().lower()
 
         # Exact match
         if target == scope_entry:

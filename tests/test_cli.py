@@ -4,11 +4,9 @@ import sys
 
 import pytest
 
-from quarr.cli import render as render_mod
-from quarr.cli.render import get_renderer, RichRenderer, PlainRenderer, SEVERITY_STYLE
-from quarr.cli.progress import ProgressReporter
 from quarr.cli.interactive import run_interactive
-
+from quarr.cli.progress import ProgressReporter
+from quarr.cli.render import SEVERITY_STYLE, PlainRenderer, RichRenderer, get_renderer
 
 # ---- render ----
 
@@ -71,7 +69,7 @@ def test_spinner_context_manager():
 
 class _FakeAgent:
     def __init__(self):
-        from quarr.core.models import PentestState, Engagement
+        from quarr.core.models import Engagement, PentestState
         self.state = PentestState()
         self.state.engagement = Engagement(name="T", allowed_targets=["10.0.0.0/8"])
         self.calls = []

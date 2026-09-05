@@ -8,7 +8,7 @@ resolution, and role-based access control dependencies.
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from quarr.api.auth import AuthError, TokenService, UserStore, LoginRateLimiter
+from quarr.api.auth import AuthError, LoginRateLimiter, TokenService, UserStore
 from quarr.core.config import Settings
 
 _bearer = HTTPBearer(auto_error=False)
@@ -22,6 +22,9 @@ _rate_limiter: LoginRateLimiter | None = None
 _ROLE_ORDER = {"viewer": 0, "operator": 1, "admin": 2}
 
 
+_INSECURE_JWT_DEFAULT = "change-me-in-production-quarr-jwt-secret"
+
+
 def init_security(settings: Settings, user_store: UserStore) -> None:
     global _settings, _token_service, _user_store, _rate_limiter
     _settings = settings
@@ -33,6 +36,20 @@ def init_security(settings: Settings, user_store: UserStore) -> None:
         refresh_ttl_min=settings.jwt_refresh_ttl_min,
     )
     _rate_limiter = LoginRateLimiter(max_per_min=settings.login_rate_limit)
+
+
+def assert_secure_config() -> None:
+    """Fail closed on an insecure signing secret. Called at SERVER STARTUP
+    (not import) so the shipped public default cannot be used to forge admin
+    tokens against a running deployment.
+    """
+    if _settings is None:
+        raise RuntimeError("security not initialized")
+    if not _settings.jwt_secret or _settings.jwt_secret == _INSECURE_JWT_DEFAULT:
+        raise RuntimeError(
+            "Refusing to serve: jwt_secret is unset or the insecure default. "
+            "Set QUARR_JWT_SECRET to a strong random value."
+        )
 
 
 def token_service() -> TokenService:

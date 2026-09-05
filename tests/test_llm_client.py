@@ -3,11 +3,13 @@
 import httpx
 import pytest
 
-from quarr.core import llm_client as lc
-from quarr.core.llm_client import OpenAIClient, _do_request, build_retry
 from quarr.core.exceptions import (
-    LLMConnectionError, LLMTimeoutError, LLMRateLimitError, LLMResponseError,
+    LLMConnectionError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMTimeoutError,
 )
+from quarr.core.llm_client import OpenAIClient, _do_request, build_retry
 
 
 def _install_post(monkeypatch, *, status=200, json_body=None, exc=None, resp_headers=None):
@@ -117,9 +119,9 @@ async def test_build_retry_does_not_retry_response_error(monkeypatch):
 
 @pytest.mark.unit
 async def test_resilient_client_opens_breaker_on_repeated_failures(monkeypatch):
-    from quarr.core.llm_client import ResilientLLMClient, OllamaClient
-    from quarr.core.config import Settings
     from quarr.core.circuit_breaker import CircuitState
+    from quarr.core.config import Settings
+    from quarr.core.llm_client import OllamaClient, ResilientLLMClient
 
     # Fast retries, low breaker threshold for the test.
     settings = Settings(

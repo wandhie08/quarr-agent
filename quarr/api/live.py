@@ -19,7 +19,6 @@ Protocol (JSON messages):
 """
 
 import asyncio
-from typing import Optional
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -53,8 +52,8 @@ class WSApproval:
         self.timeout = timeout
 
     async def gate_async(self, tool_name: str, target, risk) -> None:
-        from quarr.core.models import RiskLevel
         from quarr.core.exceptions import PolicyViolationError
+        from quarr.core.models import RiskLevel
 
         if risk not in (RiskLevel.HIGH, RiskLevel.CRITICAL):
             return
@@ -66,7 +65,7 @@ class WSApproval:
         })
         try:
             raw = await asyncio.wait_for(self.ws.receive_json(), timeout=self.timeout)
-        except (asyncio.TimeoutError, WebSocketDisconnect) as e:
+        except (TimeoutError, WebSocketDisconnect) as e:
             raise PolicyViolationError(
                 "Approval timed out or client disconnected",
                 context={"tool": tool_name},
@@ -78,7 +77,7 @@ class WSApproval:
             )
 
 
-def _authenticate(token: Optional[str]) -> Optional[dict]:
+def _authenticate(token: str | None) -> dict | None:
     if not token:
         return None
     try:

@@ -40,10 +40,13 @@ def parse_nmap_xml(xml: str) -> dict[str, Any]:
             state_el = port.find("state")
             if state_el is None or state_el.get("state") != "open":
                 continue
+            portid = port.get("portid")
+            if portid is None or not portid.isdigit():
+                continue  # skip malformed <port> elements instead of crashing
             svc_el = port.find("service")
             svc = {
                 "host": address,
-                "port": int(port.get("portid")),
+                "port": int(portid),
                 "protocol": port.get("protocol", "tcp"),
                 "name": svc_el.get("name") if svc_el is not None else None,
                 "product": svc_el.get("product") if svc_el is not None else None,

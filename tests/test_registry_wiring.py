@@ -2,9 +2,9 @@
 
 import pytest
 
-from quarr.tools.registry import TOOL_REGISTRY, network_discovery, _delegate
-from quarr.tools.integrations.nmap import NmapIntegration
 from quarr.tools.checker import ToolChecker
+from quarr.tools.integrations.nmap import NmapIntegration
+from quarr.tools.registry import TOOL_REGISTRY, _delegate, network_discovery
 
 
 @pytest.fixture(autouse=True)

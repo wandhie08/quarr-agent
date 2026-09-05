@@ -12,12 +12,11 @@ Integrasi threat feed dan IOC enrichment:
 Menggunakan public APIs (beberapa perlu API key di .env).
 """
 
-import subprocess
-import shlex
 import json
 import os
 import re
-from typing import Dict, Any
+import shlex
+import subprocess
 
 
 def _http_get(url: str, headers: dict = None, timeout: int = 15) -> str:
@@ -60,7 +59,7 @@ def virustotal_lookup(ioc_type: str, value: str) -> str:
         url_id = base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
         url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
     else:
-        return f"[ERROR] Unknown type. Use: hash, ip, domain, url"
+        return "[ERROR] Unknown type. Use: hash, ip, domain, url"
 
     raw = _http_get(url, headers=headers)
 

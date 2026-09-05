@@ -111,6 +111,8 @@ class QuarrAgent:
         api_key: str = None,
         backend: str = None,
         audit_logger=None,
+        approval_gate=None,
+        session_role: str = None,
     ):
         self.client = create_llm_client(
             model=model,
@@ -122,6 +124,10 @@ class QuarrAgent:
             self.state.engagement = engagement
         self.policy = PolicyEngine()
         self.audit_logger = audit_logger
+        # Optional async approval gate: await approval_gate(tool_name, target, risk).
+        # Used by the Live Console to negotiate dangerous-tool approval over WS.
+        self.approval_gate = approval_gate
+        self.session_role = session_role
 
     def set_engagement(self, engagement: Engagement) -> None:
         """Set atau update engagement."""
@@ -175,6 +181,30 @@ class QuarrAgent:
         if knowledge:
             state_context += f"\n\n{knowledge}"
 
+        # Cross-engagement learning: inject hints learned from PAST engagements
+        # (persistent), so the agent gets more targeted over time.
+        try:
+            from quarr.knowledge.learned import get_hints
+            hints = get_hints(technologies=technologies, query=self.state.current_objective)
+            if hints:
+                state_context += f"\n\n{hints}"
+        except Exception:
+            pass  # learning is best-effort; never block the loop
+
+        # Methodology playbooks (reference knowledge distilled from THP3 /
+        # Operator Handbook): recall a proven phase-appropriate methodology.
+        try:
+            from quarr.knowledge.methodology import get_methodology
+            method = get_methodology(
+                phase=phase,
+                domains=technologies + services,
+                query=self.state.current_objective,
+            )
+            if method:
+                state_context += f"\n\n{method}"
+        except Exception:
+            pass
+
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "system", "content": state_context},
@@ -199,6 +229,21 @@ class QuarrAgent:
         if "discovery" in tool_categories:
             return "discovery"
         return "recon"
+
+    def _record_learning(self) -> None:
+        """Persist cross-engagement learning from the current state (best-effort).
+
+        Called when an engagement run concludes so confirmed findings and tool
+        effectiveness are available to future engagements. Never raises.
+        """
+        if getattr(self, "_learning_recorded", False):
+            return
+        try:
+            from quarr.knowledge.learned import record_from_state
+            record_from_state(self.state)
+            self._learning_recorded = True
+        except Exception:
+            pass
 
     def _update_state_from_result(
         self,
@@ -325,7 +370,6 @@ class QuarrAgent:
             for f in findings:
                 sev = f.get("severity", "info")
                 if sev in ("critical", "high"):
-                    from models import FindingStatus, Severity
                     severity_map = {
                         "critical": Severity.CRITICAL, "high": Severity.HIGH,
                         "medium": Severity.MEDIUM, "low": Severity.LOW,
@@ -359,7 +403,6 @@ class QuarrAgent:
                 confidence=0.9 if vuln else 0.7,
             ))
             if vuln:
-                from models import FindingStatus, Severity
                 self.state.add_finding(Finding(
                     title=f"SQL Injection on {target}",
                     severity=Severity.CRITICAL,
@@ -392,7 +435,6 @@ class QuarrAgent:
                 confidence=0.95 if creds else 0.7,
             ))
             if creds:
-                from models import FindingStatus, Severity
                 self.state.add_finding(Finding(
                     title=f"Weak credentials on {target} ({args.get('service', 'unknown')})",
                     severity=Severity.HIGH,
@@ -602,10 +644,23 @@ class QuarrAgent:
                     continue
 
                 try:
-                    self.policy.authorize(tool_name, arguments, self.state.engagement)
+                    self.policy.authorize(
+                        tool_name, arguments, self.state.engagement,
+                        role=self.session_role,
+                        tool_risk=getattr(tool_meta, "risk", None),
+                    )
+                    # Async approval gate (Live Console) for dangerous tools.
+                    if self.approval_gate is not None:
+                        await self.approval_gate(
+                            tool_name, arguments.get("target"),
+                            getattr(tool_meta, "risk", None),
+                        )
                 except PolicyViolationError as e:
-                    logger.warning("policy_violation", tool=tool_name,
-                                   message=str(e), **e.context)
+                    # Merge context so a "tool" key inside e.context does not
+                    # collide with the explicit tool= keyword (TypeError: got
+                    # multiple values for keyword argument 'tool').
+                    log_fields = {"tool": tool_name, "message": str(e), **e.context}
+                    logger.warning("policy_violation", **log_fields)
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": f"[POLICY VIOLATION] {str(e)}"})
                     continue
@@ -637,7 +692,19 @@ class QuarrAgent:
                     exec_error = str(e)
                 except TypeError as e:
                     logger.error("tool_parameter_error", tool=tool_name, error=str(e))
-                    raw_output = f"[PARAMETER ERROR] {e}"
+                    # Tell the LLM the EXACT expected parameters so it can
+                    # self-correct a misnamed argument (local models often pass
+                    # e.g. 'url' instead of 'target') instead of abandoning the
+                    # tool entirely.
+                    schema = getattr(tool_meta, "parameters", {}) or {}
+                    props = list(schema.get("properties", {}).keys())
+                    required = schema.get("required", [])
+                    raw_output = (
+                        f"[PARAMETER ERROR] {e}\n"
+                        f"Tool '{tool_name}' expects parameters: {props} "
+                        f"(required: {required}). "
+                        f"Retry with exactly these parameter names."
+                    )
                     is_error = True
                     exec_error = str(e)
                 except ToolError as e:
@@ -677,6 +744,7 @@ class QuarrAgent:
                                      reason="consecutive_tool_errors",
                                      count=consecutive_tool_errors)
                         FindingValidator.auto_validate_findings(self.state)
+                        self._record_learning()
                         return (
                             "⚠️ Assessment halted after "
                             f"{consecutive_tool_errors} consecutive tool failures.\n\n"
@@ -731,6 +799,7 @@ class QuarrAgent:
             else:
                 if content:
                     FindingValidator.auto_validate_findings(self.state)
+                    self._record_learning()
                     return content
                 else:
                     messages.append({
@@ -741,6 +810,7 @@ class QuarrAgent:
 
         # Max steps — force conclusion
         FindingValidator.auto_validate_findings(self.state)
+        self._record_learning()
         messages.append({
             "role": "user",
             "content": (

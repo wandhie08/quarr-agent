@@ -10,14 +10,15 @@ Setiap tool:
 LLM TIDAK menentukan command. Tool executor yang menentukan.
 """
 
-import subprocess
-import shlex
-import re
 import json as _json
-from typing import Dict, Any, Callable, Optional
-from quarr.core.models import RiskLevel
-from quarr.core.exceptions import ToolNotFoundError, QuarrError
+import re
+import shlex
+import subprocess
+from collections.abc import Callable
+from typing import Any
 
+from quarr.core.exceptions import QuarrError, ToolNotFoundError
+from quarr.core.models import RiskLevel
 
 # === Integration delegation helper (Phase 2) ===
 
@@ -57,7 +58,7 @@ class ToolMeta:
         risk: RiskLevel,
         requires_scope: bool,
         handler: Callable,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         timeout: int = 180,
     ):
         self.name = name
@@ -89,25 +90,6 @@ def _run_command(cmd: str, timeout: int = 180) -> str:
         return f"[TIMEOUT] Command timed out after {timeout}s"
     except FileNotFoundError:
         return f"[ERROR] Command not found: {cmd.split()[0]}"
-    except Exception as e:
-        return f"[ERROR] {str(e)}"
-
-
-def _run_command_shell(cmd: str, timeout: int = 180) -> str:
-    """Execute via shell (for pipes, redirects)."""
-    try:
-        result = subprocess.run(
-            cmd, shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[STDERR] {result.stderr}"
-        return output if output.strip() else "[No output]"
-    except subprocess.TimeoutExpired:
-        return f"[TIMEOUT] Command timed out after {timeout}s"
     except Exception as e:
         return f"[ERROR] {str(e)}"
 
@@ -204,9 +186,22 @@ def web_content_discovery(target: str, wordlist: str = "common", mode: str = "di
         "large": "/usr/share/wordlists/dirbuster/directory-list-2.3-big.txt",
         "api": "/usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt",
     }
-    wl_path = wordlists.get(wordlist, wordlist)
+    # Restrict wordlist to known presets so an arbitrary filesystem path cannot
+    # be passed as a tool argument.
+    if wordlist not in wordlists:
+        return f"[ERROR] Unknown wordlist '{wordlist}'. Use: {', '.join(wordlists)}"
+    wl_path = wordlists[wordlist]
 
-    cmd = f"gobuster {mode} -u {shlex.quote(url)} -w {shlex.quote(wl_path)} -t 30 -q --no-error"
+    # Validate mode against the fixed subcommand set (prevents flag injection).
+    if mode not in ("dir", "dns"):
+        return "[ERROR] Invalid mode. Use 'dir' or 'dns'."
+
+    if mode == "dns":
+        # gobuster's dns subcommand targets a DOMAIN via -d, not a URL via -u.
+        domain = _validate_domain(target)
+        cmd = f"gobuster dns -d {shlex.quote(domain)} -w {shlex.quote(wl_path)} -t 30 -q --no-error"
+    else:
+        cmd = f"gobuster dir -u {shlex.quote(url)} -w {shlex.quote(wl_path)} -t 30 -q --no-error"
     return _run_command(cmd, timeout=180)
 
 
@@ -231,7 +226,14 @@ def parameter_discovery(target: str) -> str:
 def vulnerability_scan(target: str, severity: str = "critical,high") -> str:
     """Automated vulnerability scanning (Nuclei)."""
     url = _validate_url(target)
-    cmd = f"nuclei -u {shlex.quote(url)} -severity {severity} -silent -jsonl"
+    # Validate severity strictly: only known levels, comma-separated. Prevents
+    # injecting extra nuclei flags (e.g. "-t http://evil/x.yaml") via this arg.
+    allowed_sev = {"critical", "high", "medium", "low", "info", "unknown"}
+    levels = [s.strip().lower() for s in severity.split(",") if s.strip()]
+    if not levels or any(lvl not in allowed_sev for lvl in levels):
+        return "[ERROR] Invalid severity. Use any of: critical,high,medium,low,info"
+    severity = ",".join(levels)
+    cmd = f"nuclei -u {shlex.quote(url)} -severity {shlex.quote(severity)} -silent -jsonl"
     return _run_command(cmd, timeout=300)
 
 
@@ -344,7 +346,7 @@ def snmp_enum(target: str, community: str = "public") -> str:
 # TOOL REGISTRY
 # ============================================================
 
-TOOL_REGISTRY: Dict[str, ToolMeta] = {}
+TOOL_REGISTRY: dict[str, ToolMeta] = {}
 
 
 def _register(name, description, category, risk, requires_scope,
@@ -625,11 +627,18 @@ _register(
 # M8: MOBILE APPLICATION PENTEST
 # ============================================================
 
-from quarr.tools.mobile import (
-    apk_decompile, apk_secrets_scan, apk_manifest_analysis,
-    apk_network_config, apk_cert_check,
-    adb_device_check, adb_app_info, adb_storage_check,
-    adb_logcat_check, frida_ssl_bypass, objection_explore,
+from quarr.tools.mobile import (  # noqa: E402 (intentional sectioned import before domain registration)
+    adb_app_info,
+    adb_device_check,
+    adb_logcat_check,
+    adb_storage_check,
+    apk_cert_check,
+    apk_decompile,
+    apk_manifest_analysis,
+    apk_network_config,
+    apk_secrets_scan,
+    frida_ssl_bypass,
+    objection_explore,
 )
 
 # --- Static Analysis (tanpa device) ---
@@ -762,11 +771,18 @@ _register(
 # M12: ACTIVE DIRECTORY PENTEST
 # ============================================================
 
-from quarr.tools.active_directory import (
-    kerberos_asrep_roast, kerberos_kerberoast, kerberos_get_tgt,
-    secrets_dump, psexec, wmiexec,
-    ldap_search, ldap_domain_dump, bloodhound_collect,
-    rpc_enum, password_spray, hash_crack,
+from quarr.tools.active_directory import (  # noqa: E402 (intentional sectioned import before domain registration)
+    bloodhound_collect,
+    hash_crack,
+    kerberos_asrep_roast,
+    kerberos_kerberoast,
+    ldap_domain_dump,
+    ldap_search,
+    password_spray,
+    psexec,
+    rpc_enum,
+    secrets_dump,
+    wmiexec,
 )
 
 _register(
@@ -927,11 +943,18 @@ _register(
 # M19: BLUE TEAM — DEFENSE & MONITORING
 # ============================================================
 
-from quarr.tools.blue_team import (
-    firewall_status, firewall_block, firewall_unblock,
-    log_analysis, active_connections, port_audit,
-    process_monitor, service_audit, user_audit, cron_audit,
+from quarr.tools.blue_team import (  # noqa: E402 (intentional sectioned import before domain registration)
+    active_connections,
+    cron_audit,
     file_integrity_check,
+    firewall_block,
+    firewall_status,
+    firewall_unblock,
+    log_analysis,
+    port_audit,
+    process_monitor,
+    service_audit,
+    user_audit,
 )
 
 _register("firewall_status", "Check firewall rules (iptables + UFW status).",
@@ -998,9 +1021,15 @@ _register("file_integrity_check", "Check files modified in last N days. Detect u
 # M20: THREAT HUNTING & DETECTION
 # ============================================================
 
-from quarr.tools.threat_hunting import (
-    ioc_search, suspicious_files, rootkit_scan, yara_scan,
-    network_capture, dns_anomaly_check, hash_verify, baseline_compare,
+from quarr.tools.threat_hunting import (  # noqa: E402 (intentional sectioned import before domain registration)
+    baseline_compare,
+    dns_anomaly_check,
+    hash_verify,
+    ioc_search,
+    network_capture,
+    rootkit_scan,
+    suspicious_files,
+    yara_scan,
 )
 
 _register("ioc_search", "Search for Indicators of Compromise (IOC) on the system: IP, domain, hash, filename, string.",
@@ -1060,10 +1089,18 @@ _register("baseline_compare", "Compare current file state vs baseline. Creates b
 # M21: DIGITAL FORENSIC
 # ============================================================
 
-from quarr.tools.forensic import (
-    disk_image, file_recovery, memory_dump, memory_analysis,
-    metadata_extract, string_extract, binwalk_analysis,
-    log_timeline, browser_forensic, pcap_analysis, evidence_hash,
+from quarr.tools.forensic import (  # noqa: E402 (intentional sectioned import before domain registration)
+    binwalk_analysis,
+    browser_forensic,
+    disk_image,
+    evidence_hash,
+    file_recovery,
+    log_timeline,
+    memory_analysis,
+    memory_dump,
+    metadata_extract,
+    pcap_analysis,
+    string_extract,
 )
 
 _register("disk_image", "Create forensic disk image with hash verification.",
@@ -1142,9 +1179,12 @@ _register("evidence_hash", "Calculate MD5/SHA1/SHA256 hashes for evidence chain 
 # M22: DFIR (Enhanced)
 # ============================================================
 
-from quarr.tools.dfir import (
-    incident_triage, evtx_analysis, malware_analyze,
-    build_incident_timeline, chain_of_custody,
+from quarr.tools.dfir import (  # noqa: E402 (intentional sectioned import before domain registration)
+    build_incident_timeline,
+    chain_of_custody,
+    evtx_analysis,
+    incident_triage,
+    malware_analyze,
 )
 
 _register("incident_triage", "Automated incident triage: check connections, processes, ports, logins, cron, files, services in one shot.",
@@ -1184,9 +1224,12 @@ _register("chain_of_custody", "Manage evidence chain of custody: collect (hash +
 # M23: THREAT INTELLIGENCE
 # ============================================================
 
-from quarr.tools.threat_intel import (
-    virustotal_lookup, abuseipdb_check, cve_lookup,
-    shodan_lookup, threat_feed_check,
+from quarr.tools.threat_intel import (  # noqa: E402 (intentional sectioned import before domain registration)
+    abuseipdb_check,
+    cve_lookup,
+    shodan_lookup,
+    threat_feed_check,
+    virustotal_lookup,
 )
 
 _register("virustotal_lookup", "VirusTotal lookup: check file hash, IP, domain, or URL reputation. Requires VIRUSTOTAL_API_KEY.",
@@ -1227,8 +1270,11 @@ _register("threat_feed_check", "Aggregate threat intelligence from all available
 # M24: VULNERABILITY ASSESSMENT (Extended)
 # ============================================================
 
-from quarr.tools.vuln_assess import (
-    linux_security_audit, patch_assessment, config_audit, hardening_check,
+from quarr.tools.vuln_assess import (  # noqa: E402 (intentional sectioned import before domain registration)
+    config_audit,
+    hardening_check,
+    linux_security_audit,
+    patch_assessment,
 )
 
 _register("linux_security_audit", "CIS Benchmark-based Linux security audit: passwords, SSH, SUID, permissions, kernel, patching.",
@@ -1254,9 +1300,12 @@ _register("hardening_check", "Quick hardening checklist with score: firewall, SS
 # M25: SECURITY OPERATIONS
 # ============================================================
 
-from quarr.tools.secops import (
-    security_health_check, list_playbooks, get_playbook,
-    security_metrics, compliance_report,
+from quarr.tools.secops import (  # noqa: E402 (intentional sectioned import before domain registration)
+    compliance_report,
+    get_playbook,
+    list_playbooks,
+    security_health_check,
+    security_metrics,
 )
 
 _register("security_health_check", "Comprehensive security health check with score (0-100). Runs hardening, patches, connections, processes.",
@@ -1284,7 +1333,56 @@ _register("compliance_report", "Generate compliance status report. Frameworks: c
     }, "required": []}, timeout=60)
 
 
-def get_tool(name: str) -> Optional[ToolMeta]:
+# ============================================================
+# API SECURITY (OWASP API Top 10)
+# ============================================================
+
+from quarr.tools.api_security import (  # noqa: E402 (intentional sectioned import before domain registration)
+    api_bola_check,
+    api_data_exposure_check,
+    api_endpoint_discovery,
+    jwt_analyze,
+)
+
+_register(
+    "api_endpoint_discovery",
+    "Discover REST API endpoints by locating and parsing an OpenAPI/Swagger spec. Lists every path and method.",
+    "recon", RiskLevel.LOW, True, api_endpoint_discovery,
+    {"type": "object", "properties": {
+        "target": {"type": "string", "description": "Base API URL, e.g. http://host:port"}
+    }, "required": ["target"]}, timeout=30)
+
+_register(
+    "api_data_exposure_check",
+    "Test a JSON API endpoint for Excessive Data Exposure (OWASP API3): flags sensitive fields (password, token, ssn, ...) in the response.",
+    "vuln_scan", RiskLevel.LOW, True, api_data_exposure_check,
+    {"type": "object", "properties": {
+        "target": {"type": "string", "description": "Full JSON endpoint URL to fetch."},
+        "headers": {"type": "string", "description": "Optional 'Key: Value' header lines separated by ';;' (e.g. an Authorization header)."}
+    }, "required": ["target"]}, timeout=30)
+
+_register(
+    "api_bola_check",
+    "Test Broken Object Level Authorization / BOLA (OWASP API1): using one user's token, attempt to access another user's object.",
+    "exploit", RiskLevel.MEDIUM, True, api_bola_check,
+    {"type": "object", "properties": {
+        "target": {"type": "string", "description": "Base API URL."},
+        "object_path": {"type": "string", "description": "Object path with '{id}' placeholder, e.g. /users/v1/{id}"},
+        "id_a": {"type": "string", "description": "The authenticated user's own object id."},
+        "id_b": {"type": "string", "description": "Another user's object id to attempt to access."},
+        "token_a": {"type": "string", "description": "The authenticated user's bearer token (optional)."}
+    }, "required": ["target", "object_path", "id_a", "id_b"]}, timeout=30)
+
+_register(
+    "jwt_analyze",
+    "Analyze a JWT for weaknesses: alg=none, weak/guessable HS256 secret, and decode claims. No network needed.",
+    "vuln_scan", RiskLevel.LOW, False, jwt_analyze,
+    {"type": "object", "properties": {
+        "token": {"type": "string", "description": "The JWT string (header.payload.signature)."}
+    }, "required": ["token"]}, timeout=15)
+
+
+def get_tool(name: str) -> ToolMeta | None:
     return TOOL_REGISTRY.get(name)
 
 def get_available_tools() -> list:
@@ -1293,7 +1391,7 @@ def get_available_tools() -> list:
 def get_tools_for_llm() -> list:
     """Tool definitions for Ollama tool calling API."""
     tools = []
-    for name, meta in TOOL_REGISTRY.items():
+    for _name, meta in TOOL_REGISTRY.items():
         tools.append({
             "type": "function",
             "function": {

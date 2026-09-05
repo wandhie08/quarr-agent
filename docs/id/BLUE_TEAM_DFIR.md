@@ -10,6 +10,7 @@
 6. [Skenario: Threat Hunting Proaktif](#6-skenario-threat-hunting-proaktif)
 7. [Skenario: Post-Incident Forensic](#7-skenario-post-incident-forensic)
 8. [Knowledge Base](#8-knowledge-base)
+9. [Menguji Skenario Blue Team](#9-menguji-skenario-blue-team)
 
 ---
 
@@ -446,3 +447,74 @@ Eradication → Recovery → Lessons Learned
 - Maintain chain of custody
 - Order of volatility: RAM → disk cache → disk → logs → backups
 - Document every action
+
+---
+
+## 9. Menguji Skenario Blue Team
+
+QUARR dilengkapi test otomatis yang memverifikasi logika deteksi blue-team dan,
+secara opsional, menjalankan tool nyata terhadap host yang Anda kontrol. Ada tiga
+tingkatan.
+
+### Tingkat 1 — Test skenario (di-mock, jalan secara default)
+
+`tests/test_blue_team_scenarios.py` menjalankan skenario incident-response
+end-to-end dengan lapisan subprocess di-mock, jadi tidak menyentuh sistem nyata.
+Deteksi/parsing diverifikasi secara deterministik (fixture `auth.log` nyata
+dipakai untuk kasus brute-force).
+
+```bash
+python3 -m pytest tests/test_blue_team_scenarios.py -v
+```
+
+**Skenario A — Respons brute-force SSH (T1110 / T1078)**
+
+| Langkah | Tool | Assertion |
+|---------|------|-----------|
+| Deteksi | `log_analysis(auth, filter="Failed")` | IP penyerang berulang ≥ 5× |
+| Korelasi | `active_connections(established)` | sesi penyerang di :22 |
+| Containment | `firewall_block(<IP>)` | `✅ Blocked`; **menolak** injeksi/hostname |
+| Recovery | `firewall_unblock(<IP>)` | `✅ Unblocked` |
+
+**Skenario B — Malware / C2 / persistence (T1059 / T1071 / T1053 / T1070)**
+
+| Langkah | Tool | Assertion |
+|---------|------|-----------|
+| Proses | `process_monitor()` | menandai `nc -e`, `xmrig`; host bersih = tak ditandai |
+| Beacon C2 | `active_connections(suspicious)` | menandai port 4444 |
+| Backdoor | `port_audit()` | menandai listening :4444 |
+| Persistence | `cron_audit()` | memunculkan cron jahat |
+| Integritas | `file_integrity_check(/usr/bin, 7)` | melaporkan biner termodifikasi; menolak path traversal |
+
+Ada juga **test agent end-to-end** yang menjalankan playbook brute-force melalui
+loop agent nyata (LLM di-script, handler tool di-patch), memastikan policy
+mengizinkan tool blue LOW/MEDIUM untuk role `operator` dan kedua eksekusi tool
+terekam di state.
+
+### Tingkat 2 — Live read-only (opt-in)
+
+`tests/test_live_blue_team.py` menjalankan perintah **asli** (`ss`, `ps`,
+`systemctl`, `who`, `find`, ...) terhadap host lokal dan memastikan tiap tool
+menghasilkan output well-formed tanpa crash. Ditandai `@pytest.mark.live` dan
+di-skip secara default.
+
+```bash
+export QUARR_LIVE_BLUE=1
+python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+### Tingkat 3 — Live mengubah state (double opt-in, butuh root)
+
+Test `firewall_block` / `firewall_unblock` mengubah `iptables`, sehingga digerbangi
+opt-in **kedua**. Test beroperasi pada IP TEST-NET RFC 5737 (`203.0.113.42`,
+non-routable) dan selalu membersihkan aturannya setelah selesai.
+
+```bash
+export QUARR_LIVE_BLUE=1
+export QUARR_LIVE_BLUE_MUTATE=1   # hanya jika Anda menerima perubahan iptables
+sudo -E python3 -m pytest tests/test_live_blue_team.py -m live -v
+```
+
+> ⚠️ **Otorisasi:** Hanya jalankan harness live terhadap sistem yang Anda miliki
+> atau berhak uji secara eksplisit. Timeout per-test mencegah perintah yang macet
+> menggantung seluruh suite.

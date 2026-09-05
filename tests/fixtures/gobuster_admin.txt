@@ -1,0 +1,8 @@
+/index.php (Status: 200) [Size: 1543]
+/admin (Status: 301) [Size: 312]
+/admin/login.php (Status: 200) [Size: 980]
+/.git/config (Status: 200) [Size: 92]
+/backup.zip (Status: 200) [Size: 194831]
+/uploads (Status: 403) [Size: 277]
+/robots.txt (Status: 200) [Size: 64]
+/phpinfo.php (Status: 200) [Size: 84213]

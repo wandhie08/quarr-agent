@@ -2,11 +2,11 @@
 
 import pytest
 
-from quarr.tools.integrations.base import ToolIntegration, ToolResult
-from quarr.tools.executor import ExecResult
 from quarr.core.exceptions import ToolNotFoundError, ToolOutputParseError
 from quarr.core.models import RiskLevel
 from quarr.tools.checker import ToolChecker
+from quarr.tools.executor import ExecResult
+from quarr.tools.integrations.base import ToolIntegration, ToolResult
 
 
 class DummyIntegration(ToolIntegration):

@@ -15,13 +15,10 @@ Semua tool mengikuti arsitektur V1:
 - Policy engine memvalidasi scope
 """
 
-import subprocess
-import shlex
-import re
 import os
-import json
-from typing import Dict, Any
-
+import re
+import shlex
+import subprocess
 
 # ============================================================
 # Utility
@@ -184,7 +181,7 @@ def apk_manifest_analysis(apk_decoded_dir: str) -> str:
             return f"[ERROR] AndroidManifest.xml not found in {apk_decoded_dir}"
 
     try:
-        with open(manifest_path, 'r') as f:
+        with open(manifest_path) as f:
             content = f.read()
     except Exception as e:
         return f"[ERROR] Cannot read manifest: {e}"
@@ -312,7 +309,7 @@ def apk_network_config(apk_decoded_dir: str) -> str:
         return "[INFO] No network_security_config.xml found. App uses platform defaults."
 
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             content = f.read()
     except Exception as e:
         return f"[ERROR] Cannot read config: {e}"
@@ -537,7 +534,7 @@ def adb_logcat_check(package: str) -> str:
 
     result = f"=== LOGCAT ({len(out.splitlines())} lines captured) ===\n"
     if findings:
-        result += f"\n⚠️ SENSITIVE DATA IN LOGS:\n" + "\n".join(f"  {f}" for f in findings[:10])
+        result += "\n⚠️ SENSITIVE DATA IN LOGS:\n" + "\n".join(f"  {f}" for f in findings[:10])
     else:
         result += "No obvious sensitive data in logs"
 

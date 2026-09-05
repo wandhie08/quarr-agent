@@ -2,8 +2,8 @@
 
 import pytest
 
-from quarr.tools.integrations.nmap import NmapIntegration
 from quarr.tools.checker import ToolChecker
+from quarr.tools.integrations.nmap import NmapIntegration
 
 
 @pytest.fixture(autouse=True)
